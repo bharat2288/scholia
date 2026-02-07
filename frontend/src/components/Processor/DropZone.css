@@ -1,0 +1,91 @@
+/* DropZone Component */
+
+.dropzone {
+  position: relative;
+  border: 2px dashed var(--bg-elevated);
+  border-radius: 12px;
+  padding: 48px 32px;
+  text-align: center;
+  transition: all 0.25s ease;
+  background: var(--bg-surface);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+/* Subtle gradient glow on hover */
+.dropzone::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, var(--accent-camel), var(--accent-terra));
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  z-index: -1;
+}
+
+.dropzone:hover {
+  border-color: var(--text-muted);
+  background: var(--bg-raised);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.dropzone--active {
+  border-color: var(--accent-camel);
+  background: rgba(212, 165, 116, 0.08);
+  box-shadow:
+    0 0 0 1px var(--accent-camel),
+    0 0 30px rgba(212, 165, 116, 0.15),
+    0 8px 32px rgba(0, 0, 0, 0.4);
+  transform: translateY(-2px);
+}
+
+.dropzone--active::before {
+  opacity: 0.15;
+}
+
+.dropzone-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.dropzone-icon {
+  color: var(--text-muted);
+  transition: all 0.25s ease;
+}
+
+.dropzone:hover .dropzone-icon {
+  color: var(--text-tertiary);
+  transform: translateY(-4px);
+}
+
+.dropzone--active .dropzone-icon {
+  color: var(--accent-camel);
+  transform: translateY(-4px) scale(1.05);
+}
+
+.dropzone-text {
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.dropzone-subtext {
+  color: var(--text-tertiary);
+  font-size: 14px;
+}
+
+.dropzone-browse {
+  color: var(--accent-camel);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  transition: color 0.2s ease;
+}
+
+.dropzone-browse:hover {
+  color: var(--accent-terra);
+}

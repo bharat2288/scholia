@@ -1,0 +1,148 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Base styles */
+:root {
+  /* Elevation */
+  --bg-base: #0c0f0d;
+  --bg-surface: #1a1d1b;
+  --bg-raised: #252a27;
+  --bg-elevated: #323832;
+
+  /* Text */
+  --text-primary: #fafafa;
+  --text-secondary: #a8a8a8;
+  --text-tertiary: #787878;
+  --text-muted: #585858;
+
+  /* Accent */
+  --accent-camel: #d4a574;
+  --accent-terra: #cd8264;
+
+  /* Highlight colors */
+  --highlight-yellow: rgba(255, 235, 59, 0.3);
+  --highlight-blue: rgba(66, 165, 245, 0.3);
+  --highlight-green: rgba(102, 187, 106, 0.3);
+  --highlight-pink: rgba(236, 64, 122, 0.3);
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Selection styling */
+::selection {
+  background: var(--accent-camel);
+  color: var(--bg-base);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bg-elevated);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Focus styles for accessibility */
+:focus-visible {
+  outline: 2px solid var(--accent-camel);
+  outline-offset: 2px;
+}
+
+/* Typography utilities */
+@layer utilities {
+  .label {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Highlight layer styles for reader */
+.highlight-yellow { background: var(--highlight-yellow); }
+.highlight-blue { background: var(--highlight-blue); }
+.highlight-green { background: var(--highlight-green); }
+.highlight-pink { background: var(--highlight-pink); }
+
+/* Table styles for rendered HTML tables */
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.875rem;
+}
+
+.prose table thead {
+  background: var(--bg-raised);
+  border-bottom: 2px solid var(--bg-elevated);
+}
+
+.prose table th {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.prose table td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--bg-raised);
+  color: var(--text-secondary);
+}
+
+.prose table tbody tr:hover {
+  background: var(--bg-surface);
+}
+
+.prose table b {
+  color: var(--accent-camel);
+  font-weight: 600;
+}
+
+/* Highlight flash animation for scrolling to highlights */
+@keyframes highlight-flash {
+  0% { background-color: var(--accent-camel); }
+  100% { background-color: inherit; }
+}
+
+.highlight-flash {
+  animation: highlight-flash 1s ease-out;
+}
+
+/* Anchor scroll highlight - briefly highlights section when scrolled to via internal link */
+@keyframes anchor-flash {
+  0% { background-color: rgba(212, 165, 116, 0.3); }
+  100% { background-color: transparent; }
+}
+
+.anchor-highlight {
+  animation: anchor-flash 2s ease-out;
+  border-radius: 4px;
+}
+
+/* Line clamp for highlight previews */
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

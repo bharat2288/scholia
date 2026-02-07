@@ -1,0 +1,8 @@
+# Coordinator dependencies
+# Note: Most of these are already in the pytorch base image
+
+# dots-ocr for PDF processing
+# Install separately - requires specific version matching
+# pip install dots-ocr
+
+# No additional requirements needed - uses stdlib only

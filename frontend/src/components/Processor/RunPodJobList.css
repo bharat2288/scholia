@@ -1,0 +1,351 @@
+.runpod-job-list {
+  background: var(--bg-surface, #1a1d1b);
+  border: 1px solid var(--border-subtle, #323832);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.runpod-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.runpod-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-camel, #d4a574);
+}
+
+.runpod-title svg {
+  color: #6366f1;
+}
+
+.badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 12px;
+}
+
+.badge--ready {
+  background: rgba(74, 222, 128, 0.15);
+  color: #4ade80;
+}
+
+.runpod-jobs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.runpod-job {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--bg-base, #0c0f0d);
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle, #323832);
+}
+
+.job-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.job-filename {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary, #fafafa);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.job-status {
+  font-size: 12px;
+  color: var(--text-tertiary, #787878);
+}
+
+.job-status.status--processing {
+  color: var(--accent-camel, #d4a574);
+}
+
+.job-status.status--ready {
+  color: #4ade80;
+  font-weight: 500;
+}
+
+.job-status.status--downloaded {
+  color: #60a5fa;
+}
+
+.job-status.status--complete {
+  color: #4ade80;
+}
+
+.job-status.status--error {
+  color: #f87171;
+}
+
+.job-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.btn-action {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: none;
+}
+
+.btn-download {
+  background: #4ade80;
+  color: var(--bg-base, #0c0f0d);
+}
+
+.btn-download:hover:not(:disabled) {
+  background: #22c55e;
+}
+
+.btn-download:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.btn-delete {
+  background: transparent;
+  padding: 6px;
+  color: var(--text-muted, #585858);
+}
+
+.btn-delete:hover {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.job-complete-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: rgba(74, 222, 128, 0.15);
+  border-radius: 50%;
+  color: #4ade80;
+}
+
+.job-error {
+  font-size: 11px;
+  color: #f87171;
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.runpod-footer {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle, #323832);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.btn-finalize {
+  padding: 12px 20px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-finalize:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+}
+
+.btn-finalize:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.finalize-hint {
+  font-size: 12px;
+  color: var(--text-muted, #585858);
+  text-align: center;
+}
+
+/* Header actions */
+.runpod-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn-sync {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-raised, #252a27);
+  border: 1px solid var(--border-subtle, #323832);
+  border-radius: 6px;
+  color: var(--text-secondary, #a8a8a8);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-sync:hover:not(:disabled) {
+  background: var(--bg-elevated, #323832);
+  color: var(--text-primary, #fafafa);
+  border-color: var(--accent-camel, #d4a574);
+}
+
+.btn-sync:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.btn-sync svg.spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.btn-browse,
+.btn-configure {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  background: var(--bg-raised, #252a27);
+  border: 1px solid var(--border-subtle, #323832);
+  border-radius: 6px;
+  color: var(--text-secondary, #a8a8a8);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-decoration: none;
+}
+
+.btn-browse:hover,
+.btn-configure:hover {
+  background: var(--bg-elevated, #323832);
+  color: var(--accent-camel, #d4a574);
+  border-color: var(--accent-camel, #d4a574);
+}
+
+/* Empty state */
+.runpod-empty {
+  padding: 24px;
+  text-align: center;
+}
+
+.runpod-empty-text {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-tertiary, #787878);
+}
+
+.runpod-empty-text strong {
+  color: var(--text-secondary, #a8a8a8);
+}
+
+/* Download progress bar */
+.download-progress {
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: var(--bg-raised, #252a27);
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle, #323832);
+}
+
+.download-progress--error {
+  border-color: rgba(248, 113, 113, 0.4);
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.download-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.download-step {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent-camel, #d4a574);
+}
+
+.download-progress--error .download-step {
+  color: #f87171;
+}
+
+.download-percent {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary, #a8a8a8);
+}
+
+.download-progress-bar {
+  width: 100%;
+  height: 4px;
+  background: var(--bg-base, #0c0f0d);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.download-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4ade80, #22c55e);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.download-progress--error .download-progress-fill {
+  background: linear-gradient(90deg, #f87171, #dc2626);
+}
+
+.download-detail {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-tertiary, #787878);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.download-progress--error .download-detail {
+  color: #f87171;
+}

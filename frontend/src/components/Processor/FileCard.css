@@ -1,0 +1,538 @@
+/* FileCard Component */
+
+.file-card {
+  background: var(--bg-surface);
+  border-radius: 12px;
+  border: 1px solid var(--bg-raised);
+  overflow: hidden;
+  transition: border-color 0.2s ease;
+}
+
+.file-card:hover {
+  border-color: var(--bg-elevated);
+}
+
+.file-card--complete {
+  border-left: 3px solid #4ade80;
+}
+
+.file-card--error {
+  border-left: 3px solid #f87171;
+}
+
+.file-card--queued {
+  border-left: 3px solid var(--accent-camel);
+}
+
+/* Header */
+.file-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  background: var(--bg-raised);
+}
+
+.file-info {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.file-name {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.file-pages {
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+.file-remove {
+  background: transparent;
+  color: var(--text-muted);
+  padding: 4px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+}
+
+.file-remove:hover {
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+}
+
+/* Body */
+.file-card-body {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Status messages */
+.status-message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--bg-elevated);
+  border-top-color: var(--accent-camel);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Tier selection */
+.tier-selection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tier-options {
+  display: flex;
+  gap: 8px;
+}
+
+.tier-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 16px;
+  background: var(--bg-base);
+  border-radius: 8px;
+  border: 1px solid var(--bg-raised);
+  position: relative;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tier-btn:hover {
+  border-color: var(--bg-elevated);
+  background: var(--bg-raised);
+}
+
+.tier-btn--selected {
+  border-color: var(--accent-camel);
+  background: rgba(212, 165, 116, 0.1);
+}
+
+.tier-label {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.tier-time {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.tier-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--accent-camel);
+  color: var(--bg-base);
+  padding: 2px 6px;
+  border-radius: 10px;
+}
+
+.tier-badge--exists {
+  background: var(--text-muted);
+}
+
+.tier-badge--remote {
+  background: #6366f1;
+}
+
+.tier-btn--exists {
+  opacity: 0.7;
+}
+
+.tier-btn--remote {
+  border-style: dashed;
+}
+
+.tier-btn--remote.tier-btn--selected {
+  border-color: #6366f1;
+  background: rgba(99, 102, 241, 0.1);
+  border-style: solid;
+}
+
+.tier-btn--unconfigured .tier-time {
+  color: var(--accent-camel);
+  text-decoration: underline;
+}
+
+.assessment-reason {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.process-btn {
+  align-self: flex-start;
+}
+
+/* Button styles */
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent-camel), var(--accent-terra));
+  color: var(--bg-base);
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(212, 165, 116, 0.3);
+}
+
+/* Success state */
+.file-card-body--success {
+  flex-direction: row;
+  align-items: center;
+  background: rgba(74, 222, 128, 0.05);
+}
+
+.success-icon {
+  color: #4ade80;
+}
+
+.success-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.success-text {
+  font-weight: 500;
+  color: #4ade80;
+}
+
+.output-filename {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  font-family: monospace;
+}
+
+.btn-library {
+  font-size: 13px;
+  padding: 8px 16px;
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  border-radius: 8px;
+  border: 1px solid var(--bg-elevated);
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+
+.btn-library:hover {
+  background: var(--bg-elevated);
+}
+
+/* Error state */
+.file-card-body--error {
+  background: rgba(248, 113, 113, 0.05);
+}
+
+.error-message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #f87171;
+}
+
+/* Processing progress */
+.processing-status {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.progress-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.progress-text {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.progress-bar-container {
+  height: 6px;
+  background: var(--bg-base);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-camel), var(--accent-terra));
+  border-radius: 3px;
+  transition: width 0.3s ease-out;
+}
+
+/* Indeterminate progress bar for marker extraction (no per-page progress available) */
+.progress-bar-indeterminate {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-camel), var(--accent-terra));
+  border-radius: 3px;
+  width: 30%;
+  animation: indeterminate 1.5s ease-in-out infinite;
+}
+
+@keyframes indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(230%);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
+.progress-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.progress-times {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-family: monospace;
+}
+
+.progress-elapsed {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.progress-estimate {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.progress-percent {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  margin-left: auto;
+}
+
+.btn-cancel {
+  font-size: 13px;
+  padding: 4px 16px;
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  border-radius: 4px;
+  border: 1px solid var(--bg-elevated);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-cancel:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: #f87171;
+}
+
+/* Queued state */
+.queued-status {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.queue-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.queue-icon {
+  color: var(--accent-camel);
+  display: flex;
+  align-items: center;
+}
+
+.queue-text {
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.queue-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+/* Label styles */
+.label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.label--muted {
+  color: var(--text-muted);
+}
+
+/* Existing extraction warning */
+.existing-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  border-radius: 8px;
+  color: #fbbf24;
+  font-size: 13px;
+}
+
+.existing-warning svg {
+  flex-shrink: 0;
+}
+
+.existing-warning strong {
+  color: var(--text-primary, #fafafa);
+}
+
+/* Exact duplicate - stronger styling (blue/info) */
+.existing-warning--exact {
+  background: rgba(96, 165, 250, 0.1);
+  border-color: rgba(96, 165, 250, 0.4);
+  color: #60a5fa;
+}
+
+/* Fuzzy match - yellow/warning (might be different doc) */
+.existing-warning--fuzzy {
+  background: rgba(251, 191, 36, 0.1);
+  border-color: rgba(251, 191, 36, 0.3);
+  color: #fbbf24;
+}
+
+/* Folder match - default yellow */
+.existing-warning--folder {
+  background: rgba(251, 191, 36, 0.1);
+  border-color: rgba(251, 191, 36, 0.3);
+  color: #fbbf24;
+}
+
+/* Tier button with existing extraction */
+.tier-btn--exists {
+  border-color: rgba(251, 191, 36, 0.4);
+  background: rgba(251, 191, 36, 0.05);
+}
+
+.tier-btn--exists:hover {
+  border-color: rgba(251, 191, 36, 0.6);
+}
+
+.tier-badge--exists {
+  background: #fbbf24;
+  color: #1a1a1a;
+}
+
+/* Annotation warning - more prominent (red) for destructive action */
+.annotation-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  border-radius: 8px;
+  color: #f87171;
+  font-size: 13px;
+}
+
+.annotation-warning svg {
+  flex-shrink: 0;
+}
+
+/* Annotation confirmation dialog */
+.annotation-confirm {
+  padding: 16px;
+  background: rgba(248, 113, 113, 0.08);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  border-radius: 8px;
+}
+
+.annotation-confirm-text {
+  margin: 0 0 16px 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.annotation-confirm-text strong {
+  color: #f87171;
+}
+
+.annotation-confirm-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.btn-danger {
+  background: linear-gradient(135deg, #f87171, #ef4444);
+  color: white;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-danger:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(248, 113, 113, 0.3);
+}
+
+.btn-secondary {
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 500;
+  border: 1px solid var(--bg-elevated);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-secondary:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
