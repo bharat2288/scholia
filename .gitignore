@@ -31,6 +31,9 @@ tmpclaude-*
 
 # User data (SQLite databases, uploaded files, notes)
 data/
+*.db
+*.db-wal
+*.db-shm
 
 # Development scripts and artifacts
 compare_docs.py
