@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useResizable, ResizeHandle } from '../../hooks/useResizable'
 import {
   useSourceContent,
@@ -172,6 +172,9 @@ function FontSizeSlider() {
 
 export default function Reader() {
   const { id } = useParams()
+  const [searchParams] = useSearchParams()
+  const initialConversationId = searchParams.get('conversation') || null
+
   const { data, isLoading, error } = useSourceContent(id)
   const { data: highlights = [], refetch: refetchHighlights } = useHighlights(id)
   const createHighlight = useCreateHighlight()
@@ -602,6 +605,7 @@ export default function Reader() {
           selection={selection}
           isChatExpanded={isChatExpanded}
           setIsChatExpanded={setIsChatExpanded}
+          initialConversationId={initialConversationId}
         />
       </div>
     </div>
@@ -612,8 +616,9 @@ export default function Reader() {
 /**
  * Reader Sidebar with tabs: Annotations (unified), Chat, Info
  */
-function ReaderSidebar({ sourceId, documentData, highlights, onHighlightClick, onHighlightDelete, content, selection, isChatExpanded, setIsChatExpanded }) {
-  const [activeTab, setActiveTab] = useState('annotations')
+function ReaderSidebar({ sourceId, documentData, highlights, onHighlightClick, onHighlightDelete, content, selection, isChatExpanded, setIsChatExpanded, initialConversationId }) {
+  // Auto-switch to Chat tab when deep linking to a conversation
+  const [activeTab, setActiveTab] = useState(initialConversationId ? 'chat' : 'annotations')
   const [copiedAll, setCopiedAll] = useState(false)
   const [showMetadataModal, setShowMetadataModal] = useState(false)
 
@@ -722,6 +727,7 @@ function ReaderSidebar({ sourceId, documentData, highlights, onHighlightClick, o
             content={content}
             isExpanded={isChatExpanded}
             setIsExpanded={setIsChatExpanded}
+            initialConversationId={initialConversationId}
           />
         )}
 
@@ -2315,6 +2321,7 @@ function ReadingContent({ content, sections, figures, highlights, sourceId }) {
           highlightMap={highlightMap}
           onCopySection={copySectionText}
           isCopied={copiedSection === i}
+          sourceId={sourceId}
         />
       ))}
     </div>
@@ -2463,7 +2470,7 @@ function parseContentIntoSegments(content, sections, figures, sourceId) {
 /**
  * Render a single segment
  */
-function Segment({ segment, segmentIndex, highlights, highlightMap, onCopySection, isCopied }) {
+function Segment({ segment, segmentIndex, highlights, highlightMap, onCopySection, isCopied, sourceId }) {
   switch (segment.type) {
     case 'title':
       return null
@@ -2670,13 +2677,26 @@ function Segment({ segment, segmentIndex, highlights, highlightMap, onCopySectio
     default:
       // Regular paragraph - render with offset tracking and highlights
       return (
-        <p className="text-secondary leading-relaxed mb-4">
-          <OffsetText
-            text={segment.text}
-            baseOffset={segment.offset}
-            highlights={highlights}
-          />
-        </p>
+        <div className="group/edit relative mb-4">
+          <p className="text-secondary leading-relaxed">
+            <OffsetText
+              text={segment.text}
+              baseOffset={segment.offset}
+              highlights={highlights}
+            />
+          </p>
+          {sourceId && (
+            <Link
+              to={`/edit/${sourceId}?offset=${segment.offset}`}
+              className="absolute -left-8 top-0.5 opacity-0 group-hover/edit:opacity-100 p-1 rounded text-muted hover:text-camel transition-opacity"
+              title="Edit at this point"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+              </svg>
+            </Link>
+          )}
+        </div>
       )
   }
 }

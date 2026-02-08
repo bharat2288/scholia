@@ -23,9 +23,13 @@ import {
   usePresets,
   useStreamQuery,
   useSaveAsNote,
+  useConversations,
+  useConversation,
+  useDeleteConversation,
   renderPrompt
 } from '../../hooks/useCouncil'
 import { useCreateNote } from '../../hooks/useApi'
+import { API_BASE } from '../../config'
 import useReaderStore from '../../stores/useReaderStore'
 import PresetEditor from './PresetEditor'
 
@@ -289,6 +293,7 @@ export default function SimpleChatTab({
   content,
   isExpanded = false,
   setIsExpanded,
+  initialConversationId = null,
 }) {
   // State
   const [messages, setMessages] = useState([])
@@ -305,6 +310,7 @@ export default function SimpleChatTab({
   const [showMorePresets, setShowMorePresets] = useState(false) // Expandable non-quick-action presets
   const [showAnalyzeModes, setShowAnalyzeModes] = useState(false) // Analyze mode selector
   const [directedContext, setDirectedContext] = useState('') // Deployment context for directed analyze
+  const [showHistory, setShowHistory] = useState(false) // Conversation history panel
 
   const messagesEndRef = useRef(null)
   const textareaRef = useRef(null)
@@ -322,6 +328,10 @@ export default function SimpleChatTab({
   const sendMessage = useSendChatMessage()
   const { isStreaming, events, result, messageId: councilMessageId, startStream } = useStreamQuery()
   const saveAsNote = useSaveAsNote()
+
+  // Conversation history hooks
+  const { data: conversations = [] } = useConversations(sourceId)
+  const deleteConversation = useDeleteConversation()
 
   const isCouncilMode = selectedModelId === 'council'
 
@@ -610,6 +620,43 @@ export default function SimpleChatTab({
     clearAllContexts()
   }
 
+  // Load a past conversation by fetching its messages
+  const loadConversation = useCallback(async (convId) => {
+    try {
+      const response = await fetch(`${API_BASE}/council/conversations/${convId}`)
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.detail || `Failed to load conversation: ${response.status}`)
+      }
+      const data = await response.json()
+      setMessages(data.messages.map(m => ({
+        role: m.role,
+        content: m.content,
+        mode: m.mode,
+        model_id: m.model,
+        usage: m.usage,
+        messageId: m.id,
+        timestamp: m.created_at,
+        perspectives: m.perspectives,
+      })))
+      setConversationId(convId)
+      setShowHistory(false)
+    } catch (err) {
+      setMessages([{
+        role: 'error',
+        content: err.message,
+        timestamp: new Date().toISOString()
+      }])
+    }
+  }, [])
+
+  // Auto-load initial conversation (from deep link)
+  useEffect(() => {
+    if (initialConversationId && !conversationId) {
+      loadConversation(initialConversationId)
+    }
+  }, [initialConversationId, conversationId, loadConversation])
+
   const handleSaveAsNote = async (messageId) => {
     try {
       await saveAsNote.mutateAsync({ messageId, sourceId })
@@ -674,6 +721,22 @@ export default function SimpleChatTab({
           )}
         </div>
       </div>
+
+      {/* Conversation History */}
+      {conversations.length > 0 && (
+        <ConversationSelector
+          conversations={conversations}
+          activeConversationId={conversationId}
+          showHistory={showHistory}
+          onToggle={() => setShowHistory(prev => !prev)}
+          onSelect={loadConversation}
+          onNewChat={handleNewChat}
+          onDelete={(id) => {
+            deleteConversation.mutate(id)
+            if (conversationId === id) handleNewChat()
+          }}
+        />
+      )}
 
       {/* Controls Section: tight density */}
       <div className="space-y-3 mb-4">
@@ -1007,6 +1070,89 @@ export default function SimpleChatTab({
           onClose={() => setShowPresetEditor(false)}
           documentData={documentData}
         />
+      )}
+    </div>
+  )
+}
+
+
+/**
+ * Conversation Selector — collapsible list of past conversations for this source
+ */
+function ConversationSelector({ conversations, activeConversationId, showHistory, onToggle, onSelect, onNewChat, onDelete }) {
+  // Format relative time
+  const relativeTime = (dateStr) => {
+    const date = new Date(dateStr)
+    const now = new Date()
+    const diffMs = now - date
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+
+    if (diffDays === 0) return 'Today'
+    if (diffDays === 1) return 'Yesterday'
+    if (diffDays < 7) return `${diffDays}d ago`
+    return date.toLocaleDateString()
+  }
+
+  return (
+    <div className="mb-3">
+      {/* Header bar — always visible */}
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-3 py-2 bg-raised/30 rounded-md hover:bg-raised/50 transition-colors"
+      >
+        <span className="text-[11px] font-semibold tracking-[0.08em] uppercase text-tertiary">
+          Conversations ({conversations.length})
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={(e) => { e.stopPropagation(); onNewChat() }}
+            className="text-[10px] text-muted hover:text-camel transition-colors"
+          >
+            + New
+          </button>
+          <span className="text-muted text-xs">{showHistory ? '▲' : '▼'}</span>
+        </div>
+      </button>
+
+      {/* Expanded conversation list */}
+      {showHistory && (
+        <div className="mt-1.5 space-y-1 max-h-48 overflow-auto">
+          {conversations.map((conv) => {
+            const isActive = conv.id === activeConversationId
+            return (
+              <div
+                key={conv.id}
+                onClick={() => onSelect(conv.id)}
+                className={`
+                  group flex items-start gap-2 px-3 py-2 rounded cursor-pointer transition-all
+                  ${isActive
+                    ? 'bg-raised border-l-2 border-camel'
+                    : 'bg-raised/20 hover:bg-raised/50 border-l-2 border-transparent'
+                  }
+                `}
+              >
+                <div className="flex-1 min-w-0">
+                  <p className={`text-[11px] truncate ${isActive ? 'text-primary' : 'text-secondary'}`}>
+                    {conv.first_message_preview || conv.title || `Chat ${conv.id}`}
+                  </p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-[9px] text-muted">{conv.message_count} msgs</span>
+                    <span className="text-[9px] text-muted/50">{relativeTime(conv.updated_at)}</span>
+                  </div>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onDelete(conv.id)
+                  }}
+                  className="text-muted hover:text-red-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity mt-0.5"
+                >
+                  ×
+                </button>
+              </div>
+            )
+          })}
+        </div>
       )}
     </div>
   )

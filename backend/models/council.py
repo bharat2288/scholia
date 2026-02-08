@@ -21,9 +21,10 @@ from enum import Enum
 # ============================================================
 
 class QueryMode(str, Enum):
-    """Query mode - single model or council deliberation."""
+    """Query mode - single model, council deliberation, or chat."""
     SINGLE = "single"
     COUNCIL = "council"
+    CHAT = "chat"
 
 
 class ContextType(str, Enum):
@@ -175,6 +176,23 @@ class Conversation(BaseModel):
     created_at: datetime
     updated_at: datetime
     message_count: int = 0
+    first_message_preview: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ConversationSummary(BaseModel):
+    """Conversation with source info and preview — for cross-source listing."""
+    id: str
+    source_id: str
+    source_title: Optional[str] = None
+    source_author: Optional[str] = None
+    title: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    message_count: int = 0
+    first_message_preview: Optional[str] = None
 
     class Config:
         from_attributes = True

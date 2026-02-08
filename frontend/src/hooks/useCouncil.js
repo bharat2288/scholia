@@ -313,6 +313,16 @@ export function useConversations(sourceId) {
 }
 
 /**
+ * Fetch ALL conversations across all sources (for Knowledge view)
+ */
+export function useAllConversations() {
+  return useQuery({
+    queryKey: ['council', 'conversations', 'all'],
+    queryFn: () => apiFetch('/council/conversations'),
+  })
+}
+
+/**
  * Fetch a single conversation with messages
  */
 export function useConversation(conversationId) {

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAllNotes, useAllHighlights, useTags, useGluonSearch, useDeleteNote, useAllPeople, useDeleteGluon } from '../../hooks/useApi'
+import { useAllConversations, useDeleteConversation } from '../../hooks/useCouncil'
 import { MarkdownPreview, useRefNavigation } from '../../utils/markdown'
 
 /**
@@ -28,12 +29,27 @@ function SparkSVG({ className = "" }) {
 }
 
 export default function Knowledge() {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const initialQuery = searchParams.get('q') || ''
+  const initialTab = searchParams.get('tab') || 'notes'
 
-  const [activeTab, setActiveTab] = useState('notes')
+  const [activeTab, setActiveTabState] = useState(initialTab)
   const [searchQuery, setSearchQuery] = useState(initialQuery)
   const [selectedTag, setSelectedTag] = useState(null)
+
+  // Sync tab to URL so back-navigation preserves it
+  const setActiveTab = (tab) => {
+    setActiveTabState(tab)
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      if (tab === 'notes') {
+        next.delete('tab')
+      } else {
+        next.set('tab', tab)
+      }
+      return next
+    }, { replace: true })
+  }
 
   // Update search when URL query changes (e.g., navigating from a [[ref]] click)
   useEffect(() => {
@@ -104,6 +120,12 @@ export default function Knowledge() {
             >
               People
             </TabButton>
+            <TabButton
+              active={activeTab === 'chats'}
+              onClick={() => setActiveTab('chats')}
+            >
+              Chats
+            </TabButton>
           </div>
         </div>
       </header>
@@ -128,6 +150,9 @@ export default function Knowledge() {
         )}
         {activeTab === 'people' && (
           <PeoplePanel searchQuery={searchQuery} />
+        )}
+        {activeTab === 'chats' && (
+          <ChatsPanel searchQuery={searchQuery} />
         )}
       </main>
     </div>
@@ -552,6 +577,110 @@ function PeoplePanel({ searchQuery }) {
               <p className="text-xs text-muted mt-1">
                 Added {new Date(person.created_at).toLocaleDateString()}
               </p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+function ChatsPanel({ searchQuery }) {
+  const navigate = useNavigate()
+  const { data: conversations, isLoading, error } = useAllConversations()
+  const deleteConversation = useDeleteConversation()
+
+  if (isLoading) {
+    return <div className="text-secondary">Loading conversations...</div>
+  }
+
+  if (error) {
+    return <div className="text-red-400">Error loading conversations: {error.message}</div>
+  }
+
+  // Filter by search query against preview text and source title
+  const filtered = searchQuery
+    ? (conversations || []).filter(c =>
+        c.first_message_preview?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.source_title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.source_author?.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : (conversations || [])
+
+  // Format relative time
+  const relativeTime = (dateStr) => {
+    const date = new Date(dateStr)
+    const now = new Date()
+    const diffMs = now - date
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+
+    if (diffDays === 0) return 'Today'
+    if (diffDays === 1) return 'Yesterday'
+    if (diffDays < 7) return `${diffDays}d ago`
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`
+    return date.toLocaleDateString()
+  }
+
+  return (
+    <div>
+      <p className="label text-camel mb-4">
+        {filtered.length} Conversation{filtered.length !== 1 ? 's' : ''}
+        {searchQuery && (
+          <span className="ml-2 normal-case tracking-normal font-normal text-tertiary">
+            matching "<span className="text-camel">{searchQuery}</span>"
+          </span>
+        )}
+      </p>
+
+      {filtered.length === 0 ? (
+        <div className="text-muted text-center py-12">
+          {searchQuery ? 'No matching conversations found' : 'No conversations yet. Start chatting with documents in the Reader.'}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filtered.map(conv => (
+            <div
+              key={conv.id}
+              onClick={() => navigate(`/read/${conv.source_id}?conversation=${conv.id}`)}
+              className="group bg-surface border border-transparent rounded-lg p-4 hover:border-camel/40 hover:-translate-y-0.5 hover:shadow-[0_8px_20px_rgba(212,165,116,0.08)] transition-all duration-200 shadow-lg cursor-pointer"
+            >
+              {/* Source info */}
+              {conv.source_title && (
+                <div className="flex items-center gap-1 text-xs text-camel/70 mb-2">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <span className="truncate">{conv.source_title}</span>
+                  {conv.source_author && (
+                    <span className="text-muted"> — {conv.source_author}</span>
+                  )}
+                </div>
+              )}
+
+              {/* Preview */}
+              <p className="text-secondary text-sm leading-relaxed line-clamp-2">
+                {conv.first_message_preview || conv.title || `Conversation ${conv.id}`}
+              </p>
+
+              {/* Footer */}
+              <div className="mt-3 flex items-center justify-between text-xs text-muted">
+                <div className="flex items-center gap-3">
+                  <span>{conv.message_count} message{conv.message_count !== 1 ? 's' : ''}</span>
+                  <span>{relativeTime(conv.updated_at)}</span>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (confirm('Delete this conversation?')) {
+                      deleteConversation.mutate(conv.id)
+                    }
+                  }}
+                  className="opacity-0 group-hover:opacity-100 text-muted hover:text-red-400 transition-all"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
           ))}
         </div>

@@ -39,11 +39,11 @@ CHAT_MODELS = {
     },
     "claude-opus": {
         "provider": "anthropic",
-        "model": "claude-opus-4-6-20250205",
+        "model": "claude-opus-4-6",
         "display_name": "Claude Opus 4.6",
         "description": "Most capable, 1M context, best for complex analysis",
         "api_url": "https://api.anthropic.com/v1/messages",
-        "pricing": {"input": 5.00, "output": 25.00},
+        "pricing": {"input": 15.00, "output": 75.00},
         "default": False
     },
     "gpt-4o-mini": {

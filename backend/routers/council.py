@@ -41,7 +41,7 @@ import asyncio
 from database import get_db
 from models.council import (
     Preset, PresetCreate, PresetUpdate,
-    Conversation, ConversationCreate, ConversationWithMessages,
+    Conversation, ConversationCreate, ConversationSummary, ConversationWithMessages,
     Message, MessageCreate, MessageRole,
     QueryRequest, QueryResponse, QueryMode, ContextType,
     ModelInfo
@@ -564,31 +564,72 @@ async def query_stream(
 # Conversations
 # ============================================================
 
-@router.get("/conversations", response_model=List[Conversation])
-async def list_conversations(source_id: str = Query(...)):
-    """List conversations for a source."""
+@router.get("/conversations")
+async def list_conversations(source_id: Optional[str] = Query(None)):
+    """
+    List conversations.
+
+    When source_id is provided: returns conversations for that source (Conversation model).
+    When omitted: returns ALL conversations with source info and preview (ConversationSummary model).
+    """
     db = await get_db()
 
-    cursor = await db.execute("""
-        SELECT c.id, c.source_id, c.title, c.created_at, c.updated_at,
-               (SELECT COUNT(*) FROM council_messages WHERE conversation_id = c.id) as message_count
-        FROM conversations c
-        WHERE c.source_id = ?
-        ORDER BY c.updated_at DESC
-    """, [source_id])
-    rows = await cursor.fetchall()
+    if source_id:
+        # Per-source listing with first message preview
+        cursor = await db.execute("""
+            SELECT c.id, c.source_id, c.title, c.created_at, c.updated_at,
+                   (SELECT COUNT(*) FROM council_messages WHERE conversation_id = c.id) as message_count,
+                   (SELECT content FROM council_messages
+                    WHERE conversation_id = c.id AND role = 'user'
+                    ORDER BY created_at ASC LIMIT 1) as first_message
+            FROM conversations c
+            WHERE c.source_id = ?
+            ORDER BY c.updated_at DESC
+        """, [source_id])
+        rows = await cursor.fetchall()
 
-    return [
-        Conversation(
-            id=row[0],
-            source_id=row[1],
-            title=row[2],
-            created_at=datetime.fromisoformat(row[3]),
-            updated_at=datetime.fromisoformat(row[4]),
-            message_count=row[5]
-        )
-        for row in rows
-    ]
+        return [
+            Conversation(
+                id=row[0],
+                source_id=row[1],
+                title=row[2],
+                created_at=datetime.fromisoformat(row[3]),
+                updated_at=datetime.fromisoformat(row[4]),
+                message_count=row[5],
+                first_message_preview=row[6][:100] + "..." if row[6] and len(row[6]) > 100 else row[6],
+            )
+            for row in rows
+        ]
+    else:
+        # Cross-source listing — join with sources for title/author, include preview
+        cursor = await db.execute("""
+            SELECT c.id, c.source_id, c.title, c.created_at, c.updated_at,
+                   (SELECT COUNT(*) FROM council_messages WHERE conversation_id = c.id) as message_count,
+                   s.title as source_title,
+                   s.author_display as source_author,
+                   (SELECT content FROM council_messages
+                    WHERE conversation_id = c.id AND role = 'user'
+                    ORDER BY created_at ASC LIMIT 1) as first_message
+            FROM conversations c
+            LEFT JOIN sources s ON c.source_id = s.id
+            ORDER BY c.updated_at DESC
+        """)
+        rows = await cursor.fetchall()
+
+        return [
+            ConversationSummary(
+                id=row[0],
+                source_id=row[1],
+                title=row[2],
+                created_at=datetime.fromisoformat(row[3]),
+                updated_at=datetime.fromisoformat(row[4]),
+                message_count=row[5],
+                source_title=row[6],
+                source_author=row[7],
+                first_message_preview=row[8][:100] + "..." if row[8] and len(row[8]) > 100 else row[8],
+            )
+            for row in rows
+        ]
 
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationWithMessages)
