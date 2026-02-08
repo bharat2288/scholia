@@ -2,7 +2,7 @@
 
 > **σχόλια** (scholia) — Ancient Greek for "marginal notes." In classical scholarship, scholia were explanatory notes written in manuscript margins by generations of readers. This is where your marginalia live.
 
-A local-first research knowledge system for reading, annotating, and connecting ideas across PDFs and documents.
+A local-first research knowledge system for reading, annotating, and connecting ideas across PDFs, web articles, Twitter threads, and video transcripts.
 
 ![Status](https://img.shields.io/badge/status-alpha-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -43,18 +43,39 @@ But my workflow kept bumping against edges:
 - Full-text search across all content
 
 ### 🌐 Multi-Source Capture
-- **Web clipper**: Save articles with preserved formatting
-- **Tweet/thread clipper**: Capture Twitter threads via URL
-- **Video clipper**: YouTube transcripts with chapters and timestamps
+- **Web clipper**: Save articles with preserved formatting (trafilatura)
+- **Tweet/thread clipper**: Capture Twitter threads and articles via URL (FxTwitter API)
+- **Video clipper**: YouTube transcripts with chapter detection and timestamps
+- **WhatsApp capture**: Send notes via WhatsApp webhook — auto-classified and tagged by Claude
 
 ### 🤖 Built-in LLM Chat
 - Chat with Claude/GPT about what you're reading
-- "Council" mode: multiple models weigh in on your question
+- "Council" mode: three independent models deliberate, Claude synthesizes
 - Save AI responses as notes
+- Per-query cost tracking
+
+### 🧪 Analytical Presets
+- One-click preset prompts: summarize, theorize, critique, concept-map, explain, quotables, research questions
+- Source-type-aware filtering (different presets surface for documents vs. web vs. video)
+- Full-document vs. selection variants
+- Theorize mode with three sub-modes: Comprehensive, Reverse, Directed
+- Create custom presets alongside system defaults
+
+### 🔬 Research Sessions
+- Multi-document AI conversations across your library
+- Add multiple sources to a session as context
+- Agentic RLM (Research Language Model) with tool use — the model can search, retrieve, and cross-reference your sources
+- Streaming responses with visible tool call feed
+
+### 📚 Metadata Management
+- DOI lookup via Crossref, ISBN lookup via Open Library
+- AI-powered metadata suggestion (title, author, year, tags)
+- Batch metadata suggestion across your library
 
 ### ⚙️ PDF Processing Pipeline
 - Multi-tier extraction: Marker → dots-ocr → Tesseract
 - Batch processing with job persistence
+- Optional GPU acceleration via RunPod (remote pod management)
 - Figure extraction with bounding box cropping
 - Section Editor for fixing OCR errors
 
@@ -63,42 +84,50 @@ But my workflow kept bumping against edges:
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                         SCHOLIA                              │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  INGESTION                                                   │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐    │
-│  │   PDF    │  │   EPUB   │  │   Web    │  │  Video   │    │
-│  │ Marker/  │  │ ebooklib │  │trafilatura│  │  yt-dlp  │    │
-│  │ dots-ocr │  │          │  │          │  │          │    │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘    │
-│       └─────────────┴─────────────┴─────────────┘           │
-│                          ↓                                   │
-│                 ┌────────────────┐                          │
-│                 │ Unified Source │                          │
-│                 │    Storage     │                          │
-│                 └───────┬────────┘                          │
-│                         ↓                                    │
-│  STORAGE (SQLite)                                           │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │ sources │ sections │ gluons │ highlights │ *_fts      │ │
-│  └────────────────────────────────────────────────────────┘ │
-│                         ↓                                    │
-│  FRONTEND (React + Tailwind)                                │
-│  ┌──────────┬─────────────────────┬────────────────────┐   │
-│  │ Library  │      Reader         │     Knowledge      │   │
-│  │          │  ToC│Content│Sidebar│  Gluons│Search     │   │
-│  └──────────┴─────────────────────┴────────────────────┘   │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                            SCHOLIA                               │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  INGESTION                                                       │
+│  ┌────────┐ ┌────────┐ ┌──────────┐ ┌────────┐ ┌──────────┐    │
+│  │  PDF   │ │  EPUB  │ │   Web    │ │ Video  │ │ WhatsApp │    │
+│  │Marker/ │ │ebooklib│ │trafilat. │ │ yt-dlp │ │ webhook  │    │
+│  │dots-ocr│ │        │ │FxTwitter │ │        │ │          │    │
+│  └───┬────┘ └───┬────┘ └────┬─────┘ └───┬────┘ └────┬─────┘    │
+│      └──────────┴───────────┴────────────┴───────────┘          │
+│                            ↓                                     │
+│                  ┌─────────────────┐                             │
+│                  │  Unified Source │                             │
+│                  │     Storage     │                             │
+│                  └────────┬────────┘                             │
+│                           ↓                                      │
+│  STORAGE (SQLite + FTS5)                                        │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ sources │ sections │ gluons │ highlights │ conversations │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                           ↓                                      │
+│  LLM LAYER                                                      │
+│  ┌────────────┬───────────────┬──────────────────────────┐      │
+│  │ Chat (1:1) │ Council (n:1) │ RLM Agent (tool-using)   │      │
+│  │            │ 3 models +    │ search, retrieve, cross-  │      │
+│  │            │ synthesizer   │ reference across sources  │      │
+│  └────────────┴───────────────┴──────────────────────────┘      │
+│                           ↓                                      │
+│  FRONTEND (React + TanStack Query + Zustand)                    │
+│  ┌────────┬──────────────────┬───────────┬───────────────┐      │
+│  │Library │     Reader       │ Knowledge │   Research    │      │
+│  │        │ ToC│Content│Side │ Gluons    │   Sessions    │      │
+│  └────────┴──────────────────┴───────────┴───────────────┘      │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 **Tech Stack:**
 - **Backend**: FastAPI + SQLite (aiosqlite) + FTS5
-- **Frontend**: React 18 + Vite + Tailwind CSS
+- **Frontend**: React 18 + Vite + Tailwind CSS + TanStack Query + Zustand
+- **LLM Integration**: Anthropic SDK, OpenAI SDK (multi-provider)
 - **PDF Extraction**: Marker, dots-ocr, PyMuPDF, Tesseract
-- **Web/Video**: trafilatura, yt-dlp
+- **Web/Video**: trafilatura, yt-dlp, FxTwitter API
 
 ---
 
@@ -161,29 +190,47 @@ The frontend defaults to `http://localhost:8200` for the API. Override with `VIT
 ```
 scholia/
 ├── backend/
-│   ├── server.py           # FastAPI application
-│   ├── database.py         # SQLite + migrations
-│   ├── routers/            # API endpoints
-│   │   ├── sources.py      # Unified source CRUD
-│   │   ├── reading.py      # Content delivery
-│   │   ├── highlights.py   # Annotation system
-│   │   ├── gluons.py       # Notes + linking
-│   │   ├── chat.py         # LLM integration
-│   │   └── processor.py    # PDF processing
-│   └── services/           # Business logic
+│   ├── server.py              # FastAPI application
+│   ├── database.py            # SQLite + migrations
+│   ├── routers/               # API endpoints
+│   │   ├── sources.py         # Unified source CRUD + clipping
+│   │   ├── reading.py         # Content delivery + position tracking
+│   │   ├── highlights.py      # Offset-based annotation
+│   │   ├── gluons.py          # Notes, tags, linking, backlinks
+│   │   ├── chat.py            # Single-model LLM chat
+│   │   ├── council.py         # Multi-model council + presets
+│   │   ├── sessions.py        # Research sessions + RLM agent
+│   │   ├── processor.py       # PDF processing pipeline
+│   │   ├── runpod.py          # Remote GPU pod management
+│   │   ├── metadata_lookup.py # DOI/ISBN lookup
+│   │   └── whatsapp.py        # WhatsApp webhook capture
+│   └── services/              # Business logic
+│       ├── chat/              # Chat service + config
+│       ├── council/           # Council service + preset definitions
+│       ├── lit_engine/        # PDF extraction (marker, dots-ocr, epub)
+│       ├── rlm_agent.py       # Agentic research model with tools
+│       ├── web_clipper.py     # Web article extraction
+│       ├── tweet_clipper.py   # Twitter/X thread capture
+│       ├── video_clipper.py   # YouTube transcript extraction
+│       └── metadata_ai.py    # AI-powered metadata suggestion
 │
 ├── frontend/
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── Library/    # Source browsing
-│   │   │   ├── Reader/     # Reading interface
-│   │   │   ├── Knowledge/  # Gluon browsing
-│   │   │   └── Processor/  # PDF processing UI
-│   │   ├── stores/         # Zustand state
-│   │   └── hooks/          # React hooks
+│   │   │   ├── Library/       # Source browsing + import
+│   │   │   ├── Reader/        # Reading interface + chat sidebar
+│   │   │   ├── Editor/        # Section editor for OCR fixes
+│   │   │   ├── Knowledge/     # Gluon browsing + search
+│   │   │   ├── Gluon/         # Individual gluon view
+│   │   │   ├── Research/      # Research sessions UI
+│   │   │   ├── Processor/     # PDF processing + RunPod UI
+│   │   │   └── common/        # Shared components (modals, inputs)
+│   │   ├── stores/            # Zustand state management
+│   │   ├── hooks/             # TanStack Query API hooks
+│   │   └── config.js          # API base URL configuration
 │   └── index.html
 │
-└── data/                   # SQLite database + extracted content (gitignored)
+└── data/                      # SQLite database + extracted content (gitignored)
 ```
 
 ---
@@ -206,7 +253,10 @@ This is alpha software. Things may break. The database schema may change.
 - [x] Web/tweet/video clipping
 - [x] Gluon system (notes + linking)
 - [x] LLM chat integration
-- [ ] Research Sessions (multi-document AI conversations)
+- [x] Analytical presets (summarize, theorize, critique, etc.)
+- [x] Research Sessions (multi-document AI with tool use)
+- [x] Metadata management (DOI/ISBN lookup, AI suggestion)
+- [x] WhatsApp capture
 - [ ] Browser extension for quick capture
 
 ---
