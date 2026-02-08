@@ -11,13 +11,14 @@ A local-first research knowledge system for reading, annotating, and connecting 
 
 ## Why I Built This
 
-I was a heavy RemNote user during my PhD, but kept hitting friction:
-- PDF reading felt disconnected from note-taking
-- Highlights weren't truly first-class objects I could link to
-- Cross-document connections required manual effort
-- OCR quality on academic PDFs was often poor
+I was a heavy [RemNote](https://www.remnote.com/) user during my PhD, and I owe a real debt to that tool — its model of bidirectional linking, highlights-as-objects, and intercitational note-taking shaped how I think about knowledge management. Scholia is built on that foundation.
 
-Scholia is my answer: a unified system where **reading and annotation happen in the same place**, and every highlight becomes a linkable object that can be referenced from anywhere.
+But my workflow kept bumping against edges:
+
+- **LLM integration behind a quota wall.** RemNote's AI features require a subscription with limited credits. I'm already paying for API access directly — I'd rather route that into my own reader with no throttling, full model choice, and custom prompting.
+- **Research doesn't live in one format.** I read PDFs, but I also consume web articles, Twitter threads, and YouTube lectures. I wanted a single system that normalizes all of these into the same reading and annotation experience.
+- **Preset analytical moves.** Over years of academic reading, I developed recurring ways of engaging with texts — summarize, theorize, critique, extract claims. I wanted those baked into the tool as one-click presets, not copy-pasted into a separate chat window.
+- **Extensibility.** I built a [RemNote plugin](https://github.com/bharat2288/notes-processor) and found myself doing ongoing technical work to maintain it. At that point, I decided to channel that energy into building exactly what I wanted.
 
 ---
 
