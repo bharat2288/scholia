@@ -26,17 +26,17 @@ Two modes:
 
 The selection variant doesn't just paraphrase — it explains *why this passage matters* in the context of the whole work. The full-doc variant produces a structured analysis with explicit sections, not a paragraph of mush.
 
-### Theorize
+### Analyze
 
-**Source types**: All | **Frontend modes**: 3
+**Source types**: Documents | **Frontend modes**: 3
 
-The most complex preset. Three sub-modes (handled by the frontend, not separate presets):
+The most complex preset — a rigorous analytical pipeline for connecting text to established intellectual traditions. Three sub-modes (handled by the frontend, not separate presets):
 
-- **Comprehensive**: Generate multiple theoretical frameworks that could explain the text. "What theoretical lenses would illuminate this?"
-- **Reverse**: Work backwards from the conclusions to identify implicit theoretical commitments. "What would have to be true for this argument to work?"
-- **Directed**: Apply a specific theoretical framework the user names. "Read this through the lens of [user-specified theory]."
+- **Comprehensive**: The base mode. Identifies theoretical resonances (3-5 frameworks the text engages with, explicitly or implicitly), surfaces theoretical tensions, generates questions about what must be true for the claims to hold, and flags genuinely novel contributions. This isn't "generate frameworks" in the abstract — it's grounded analysis that distinguishes between connections the text makes and connections you're drawing.
+- **Reverse**: A completely separate prompt that works *backward* from the text's conclusions. It excavates hidden foundations — the assumptions, commitments, and conditions that must hold for the argument to work. Where Comprehensive looks outward (connecting to traditions), Reverse looks inward (unpacking what's taken for granted).
+- **Directed**: Wraps the Comprehensive prompt with a user-supplied deployment context. You specify *how* you intend to use these insights ("designing a curriculum for...", "writing a policy brief on..."), and the analysis weights its theoretical connections toward what's actionable for that context.
 
-Theorize is the preset I use most. Academic reading is fundamentally about seeing texts through theoretical frames, and having the model generate novel framings often reveals angles I hadn't considered.
+Analyze is the preset I use most. Academic reading is fundamentally about seeing texts through theoretical frames, and having the model surface resonances I hadn't considered — or excavate assumptions I'd taken for granted — is where the LLM earns its cost.
 
 ### Critique
 
@@ -105,17 +105,17 @@ This is the "what should I investigate next?" preset. It's designed to generate 
 Not every preset makes sense for every source type. Concept Map works well for academic papers but poorly for Twitter threads. Quotables makes sense for documents and web articles but not for video transcripts (where exact quotes are harder to use).
 
 Each preset has a `source_types` field:
-- `null` — show for all source types (Summarize, Theorize, Critique, Explain)
+- `null` — show for all source types (Summarize, Analyze, Critique, Explain)
 - `["document", "web"]` — show for PDFs and web articles (Concept Map, Quotables)
 - `["document", "web", "thread"]` — show for text-based sources (Research Questions)
 
-When you open the Reader sidebar, the preset list adapts to what you're reading. A PDF shows all seven presets. A YouTube transcript shows four (Summarize, Theorize, Critique, Explain).
+When you open the Reader sidebar, the preset list adapts to what you're reading. A PDF shows all seven presets. A YouTube transcript shows four (Summarize, Analyze, Critique, Explain).
 
 ---
 
 ## Prompt Architecture
 
-Each preset prompt is 30-60 lines of structured text. They share a common architecture:
+Each preset prompt is a substantial structured document — typically 25-45 lines — sent in full to the model (not truncated). They share a common architecture:
 
 ```
 [Role assignment]
@@ -192,9 +192,9 @@ This means prompt improvements ship with code updates. If I improve the Critique
 
 An earlier version had 15 presets (key-claims, define, connect, summary, counterarguments, eli5, etc.). Most were redundant or barely used. "Key claims" is a subset of Critique. "Define" is a subset of Explain. "Counterarguments" is a subset of Critique. Consolidation to 7 rich presets is better than 15 thin ones.
 
-### Why Frontend-Only Modes for Theorize?
+### Why Frontend-Only Modes for Analyze?
 
-The three Theorize modes (Comprehensive, Reverse, Directed) share 90% of their prompt. Creating three separate presets would mean maintaining three nearly-identical prompts. Instead, one preset exists in the DB, and the frontend prepends the mode instruction. Less duplication, easier maintenance.
+The three Analyze modes (Comprehensive, Reverse, Directed) share 90% of their prompt. Creating three separate presets would mean maintaining three nearly-identical prompts. Instead, one preset exists in the DB, and the frontend prepends the mode instruction. Less duplication, easier maintenance.
 
 ### Why Source-Type Filtering and Not Hiding?
 

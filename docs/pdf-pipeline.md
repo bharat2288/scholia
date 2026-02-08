@@ -226,6 +226,14 @@ Re-processing a document you've already processed wastes time. Three detection s
 2. **Folder name prediction** — parse filename patterns (Author_Year_Title) and check for existing folder
 3. **Fuzzy author+year match** — query DB for matching year + overlapping author words
 
+### Practical Recommendations
+
+If time and compute aren't constraints, **dots-ocr produces the best results** — particularly for section breaks and heading hierarchy, which the entire downstream experience (reader navigation, highlights, section editor) depends on. For one-off processing, running dots-ocr locally is perfectly viable.
+
+That said, dots-ocr is resource-intensive and not always practical for bulk work. The cheaper tiers exist for a reason.
+
+The **ideal input format is epub** — its formatting is simple and well-structured, so extraction is trivial and sections come out clean without the OCR step.
+
 ### Tier Priority
 
 If you process a document with Marker and later reprocess with dots-ocr, the higher-quality extraction wins. But the reverse isn't true — reprocessing a dots-ocr document with Marker won't downgrade it. The UPSERT logic checks `extraction_method` in metadata and only upgrades.

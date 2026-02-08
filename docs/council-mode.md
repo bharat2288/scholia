@@ -6,9 +6,9 @@
 
 ## The Idea
 
-Andrej Karpathy has talked about the value of running the same question through multiple models and comparing outputs. Different models have different training distributions, different failure modes, and different strengths. A question that stumps Claude might be straightforward for GPT-4, and vice versa.
+Andrej Karpathy's [llm-council](https://github.com/karpathy/llm-council) demonstrated the value of running the same question through multiple models and comparing outputs. Different models have different training distributions, different failure modes, and different strengths. A question that stumps Claude might be straightforward for GPT, and vice versa.
 
-Council mode formalizes this. Instead of asking one model and hoping for the best, you ask three models independently, then have a fourth synthesize their perspectives into a unified response.
+Scholia's Council mode extends this idea — integrating multi-model deliberation directly into the reading workflow. Rather than a standalone tool, the council is embedded in the reader sidebar, where it can receive document context, work with analytical presets, and track costs per query. My standalone [llm-council-redux](https://github.com/bharat2288/llm-council-redux) is available separately if you want the multi-model deliberation pattern without the rest of Scholia.
 
 ---
 
@@ -17,23 +17,35 @@ Council mode formalizes this. Instead of asking one model and hoping for the bes
 ### The Deliberation
 
 ```
-User question + context
+User question + document context
         ↓
-┌───────────────────────────────────────────┐
-│  Parallel execution (asyncio.gather)       │
-│                                           │
-│  Theorist 1: Claude (Anthropic)           │
-│  Theorist 2: GPT-4 (OpenAI)              │
-│  Theorist 3: Gemini (OpenRouter)          │
-└───────────────────────────────────────────┘
+┌───────────────────────────────────────────────┐
+│  Parallel execution (asyncio.gather)           │
+│                                               │
+│  Theorist 1: Claude Opus (Anthropic)          │
+│  Theorist 2: GPT (OpenAI)                    │
+│  Theorist 3: Gemini Pro (via OpenRouter)      │
+└───────────────────────────────────────────────┘
         ↓
 Chairman: Claude (Anthropic)
   - Reads all three perspectives
   - Identifies agreement and disagreement
   - Synthesizes unified response
         ↓
-Final answer + cost breakdown
+Final answer + per-provider cost breakdown
 ```
+
+### API Keys Required
+
+Council mode requires your own API keys for each provider:
+
+| Provider | Environment Variable | What It Enables |
+|----------|---------------------|-----------------|
+| Anthropic | `ANTHROPIC_API_KEY` | Theorist 1 + Chairman |
+| OpenAI | `OPENAI_COUNCIL_KEY` | Theorist 2 |
+| OpenRouter | `OPENROUTER_API_KEY` | Theorist 3 (Gemini or any OpenRouter-supported model) |
+
+Models are configurable via environment variables (`ANTHROPIC_MODEL`, `OPENAI_MODEL`, `OPENROUTER_MODEL`). The defaults are the latest frontier models from each provider.
 
 ### Parallel Execution
 
@@ -50,10 +62,10 @@ This matters because model APIs are unreliable. OpenRouter's Gemini endpoint mig
 The chairman (always Claude) gets a specific prompt:
 
 > You are the chairman of a panel of theorists. You've received independent analyses from three experts. Your task is to:
-> 1. Identify points of agreement
-> 2. Note genuine disagreements (don't paper over them)
-> 3. Synthesize a unified response that's stronger than any individual
-> 4. Flag when experts disagree and the disagreement matters
+> 1. Identify common threads across perspectives
+> 2. Note unique insights from each council member
+> 3. Resolve any tensions or contradictions
+> 4. Present a unified conclusion that incorporates the strongest elements
 
 The chairman doesn't just pick the "best" answer — it creates a meta-analysis. If all three models agree, you get high confidence. If they disagree, you see the fault lines.
 
@@ -63,7 +75,7 @@ The chairman doesn't just pick the "best" answer — it creates a meta-analysis.
 
 ### Contentious Topics
 
-If you're reading a paper that makes strong claims, running it through Council mode reveals where the models diverge. Model A might find the argument convincing; Model B might identify a methodological flaw; Model C might contextualize it differently. The chairman synthesis gives you the full landscape.
+This is where Council mode genuinely earns its cost. If you're reading a paper that makes strong claims, running it through Council reveals where the models diverge. One model might find the argument convincing; another might identify a methodological flaw; the third might contextualize it differently. The chairman synthesis gives you the full landscape.
 
 ### Interpretive Questions
 
@@ -77,12 +89,13 @@ If you're reading a paper that makes strong claims, running it through Council m
 
 ## When It's Overkill
 
-Most questions don't need three models. If you're asking "summarize this paragraph" or "what's the main argument," a single model is fine. Council mode costs 3-4x more than a single query (three theorist calls + one chairman call) and takes longer (waiting for the slowest model).
+Honestly, most questions don't need three models. If you're asking "summarize this paragraph" or "what's the main argument," a single model is fine. Council mode costs 3-4x more than a single query (three theorist calls + one chairman call) and takes longer (waiting for the slowest model).
 
 **Use Council for**:
 - Questions where you suspect the answer is model-dependent
 - High-stakes analysis (dissertation material, paper reviews)
 - Exploring a concept from multiple angles
+- Topics where genuine disagreement is informative
 
 **Use single model for**:
 - Factual extraction (author, year, methodology)
@@ -92,42 +105,22 @@ Most questions don't need three models. If you're asking "summarize this paragra
 
 ---
 
-## Provider Configuration
-
-### Theorist 1: Anthropic (Claude)
-
-Direct API call. Same SDK used for Chat. Typically the strongest on nuanced textual analysis and careful reasoning.
-
-### Theorist 2: OpenAI (GPT-4)
-
-Direct API call via OpenAI SDK. Often brings different emphasis — more structured, sometimes more factual.
-
-### Theorist 3: OpenRouter (Gemini/other)
-
-Via OpenRouter's unified API. This slot is configurable — it can be Gemini, Llama, Mistral, or any model OpenRouter supports. Gemini brings Google's training distribution, which sometimes surfaces different associations.
-
-### Why Three Providers?
-
-Three is the minimum for meaningful disagreement detection. Two models either agree or disagree — you can't tell who's right. Three models give you majority vote *and* minority dissent. If two agree and one disagrees, you have signal about where the uncertainty lies.
-
----
-
 ## Cost Tracking
 
-Council mode is expensive relative to single-model queries. The cost breakdown shows:
+Every council deliberation tracks cost per provider. The UI shows a breakdown after each query:
 
 ```
-Theorist 1 (Claude):    $0.032
-Theorist 2 (GPT-4):     $0.028
-Theorist 3 (Gemini):    $0.015
-Chairman (Claude):       $0.041
-─────────────────────────────
-Total:                   $0.116
+Theorist 1 (Claude Opus):    $0.032  (15,000 input + 800 output tokens)
+Theorist 2 (GPT):            $0.028  (12,000 input + 600 output tokens)
+Theorist 3 (Gemini Pro):     $0.015  (14,000 input + 700 output tokens)
+Chairman (Claude Opus):       $0.041  (all perspectives + query as input)
+─────────────────────────────────────
+Total:                        $0.116
 ```
 
-Compare this to a single Chat query at ~$0.03. Council mode is 4x the cost. The chairman call is the most expensive because it receives all three theorist outputs plus the original question — a large context.
+Compare this to a single Chat query at ~$0.03. Council mode is roughly 4x the cost. The chairman call is the most expensive because it receives all three theorist outputs plus the original question — a large context.
 
-Each provider uses different pricing, and the system normalizes usage across providers to give you accurate cost data.
+Pricing is maintained per-provider in `config.py` (per 1M tokens, input and output separately). The system normalizes token counts across providers (Anthropic uses `input_tokens`/`output_tokens`, OpenAI uses `prompt_tokens`/`completion_tokens`) to produce accurate, comparable cost data.
 
 ---
 
@@ -137,11 +130,15 @@ The streaming variant (`deliberate_streaming()`) yields SSE events as each model
 
 ```
 council_start     → "Starting deliberation with 3 theorists..."
-theorist_complete → "Theorist 1 (Claude) responded"
-theorist_complete → "Theorist 2 (GPT-4) responded"
-theorist_complete → "Theorist 3 (Gemini) responded"
-chairman_start    → "Chairman synthesizing..."
-complete          → Final synthesis + cost breakdown
+model_start       → "Claude Opus starting..."
+model_start       → "GPT starting..."
+model_start       → "Gemini Pro starting..."
+model_complete    → "Claude Opus responded" (content + usage)
+model_complete    → "Gemini Pro responded" (content + usage)
+model_complete    → "GPT responded" (content + usage)
+synthesis_start   → "Chairman synthesizing..."
+synthesis_complete → Synthesis content + usage
+complete          → Final result with all perspectives + cost breakdown
 ```
 
 This lets the UI show progress: you see each theorist finish in real-time, then the chairman begins synthesis. It's more engaging than staring at a spinner for 15 seconds.
@@ -152,7 +149,7 @@ This lets the UI show progress: you see each theorist finish in real-time, then 
 
 Council mode works with analytical presets. When you click "Critique" in Council mode, the preset prompt goes to all three theorists. Each produces an independent critique. The chairman synthesizes the three critiques into a unified critical analysis.
 
-This is particularly powerful for Theorize: three models generate different theoretical framings, and the chairman identifies which framings are complementary, which are contradictory, and which are most productive.
+This is particularly powerful for the Analyze preset: three models generate different theoretical framings, and the chairman identifies which framings are complementary, which are contradictory, and which are most productive.
 
 ---
 
@@ -160,7 +157,7 @@ This is particularly powerful for Theorize: three models generate different theo
 
 ### Why Claude as Chairman?
 
-The chairman role requires meta-cognition: reading three analyses, identifying patterns across them, and producing coherent synthesis. Claude (Anthropic) is consistently the strongest at this kind of comparative, meta-analytical reasoning. GPT-4 tends to be more summarative; Gemini more pattern-matching. The chairman needs to *judge*, not just compile.
+The chairman role requires meta-cognition: reading three analyses, identifying patterns across them, and producing coherent synthesis. Claude is consistently the strongest at this kind of comparative, meta-analytical reasoning. The chairman needs to *judge*, not just compile.
 
 ### Why Not More Models?
 
@@ -173,3 +170,10 @@ Sequential deliberation would let later models respond to earlier ones — a con
 ### Why Single-Model Fallback?
 
 `query_single()` bypasses the council entirely for fast, cheap queries. Not everything needs three opinions. The UI lets you toggle between Council and single-model mode, so you choose the level of analysis per question.
+
+---
+
+## Lineage
+
+- **[karpathy/llm-council](https://github.com/karpathy/llm-council)** — The original concept: multiple LLMs deliberate, review each other's work, chairman synthesizes. Scholia's Council extends this with document-aware context, preset integration, per-query cost tracking, and streaming progress.
+- **[bharat2288/llm-council-redux](https://github.com/bharat2288/llm-council-redux)** — My standalone implementation of the multi-model deliberation pattern, available separately from Scholia.

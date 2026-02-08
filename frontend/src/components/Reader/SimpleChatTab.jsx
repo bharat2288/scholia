@@ -44,8 +44,8 @@ const SOURCE_TYPE_NOUNS = {
   media: 'this transcript',
 }
 
-// Theorize mode configurations
-const THEORIZE_MODES = [
+// Analyze mode configurations
+const ANALYZE_MODES = [
   {
     id: 'comprehensive',
     name: 'Comprehensive',
@@ -66,8 +66,8 @@ const THEORIZE_MODES = [
   },
 ]
 
-// Reverse-mode Theorize prompt (separate from the comprehensive prompt)
-const THEORIZE_REVERSE_PROMPT = `You are analyzing {source_type}. Your goal is to work BACKWARD from the text's conclusions to excavate its hidden foundations.
+// Reverse-mode Analyze prompt (separate from the comprehensive prompt)
+const ANALYZE_REVERSE_PROMPT = `You are analyzing {source_type}. Your goal is to work BACKWARD from the text's conclusions to excavate its hidden foundations.
 
 ## Your Task
 
@@ -108,7 +108,7 @@ TEXT TO ANALYZE:
 {context}`
 
 // Directed-mode preamble (wraps the comprehensive prompt)
-const THEORIZE_DIRECTED_PREAMBLE = `DEPLOYMENT CONTEXT: The reader intends to use insights from this text in the following context: {deployment_context}
+const ANALYZE_DIRECTED_PREAMBLE = `DEPLOYMENT CONTEXT: The reader intends to use insights from this text in the following context: {deployment_context}
 
 Given this deployment context, weight your theoretical analysis toward frameworks, tensions, and questions most relevant to this application. Still be comprehensive, but prioritize what's actionable for this context.
 
@@ -303,8 +303,8 @@ export default function SimpleChatTab({
   const [showPresetEditor, setShowPresetEditor] = useState(false)
   const [lastSelectionId, setLastSelectionId] = useState(null) // Track last selection to avoid duplicates
   const [showMorePresets, setShowMorePresets] = useState(false) // Expandable non-quick-action presets
-  const [showTheorizeModes, setShowTheorizeModes] = useState(false) // Theorize mode selector
-  const [directedContext, setDirectedContext] = useState('') // Deployment context for directed theorize
+  const [showAnalyzeModes, setShowAnalyzeModes] = useState(false) // Analyze mode selector
+  const [directedContext, setDirectedContext] = useState('') // Deployment context for directed analyze
 
   const messagesEndRef = useRef(null)
   const textareaRef = useRef(null)
@@ -531,14 +531,14 @@ export default function SimpleChatTab({
   }, [presets])
 
   // Quick action handler - inserts prompt text into textarea for editing
-  // For Theorize preset, shows mode selector instead of immediately populating
+  // For Analyze preset, shows mode selector instead of immediately populating
   const handleQuickAction = (presetId) => {
     const preset = presets.find(p => p.id === presetId)
     if (!preset) return
 
-    // Special handling for Theorize — show mode selector
-    if (presetId === 'theorize') {
-      setShowTheorizeModes(true)
+    // Special handling for Analyze — show mode selector
+    if (presetId === 'analyze') {
+      setShowAnalyzeModes(true)
       setSelectedPresetId(presetId)
       return
     }
@@ -564,22 +564,22 @@ export default function SimpleChatTab({
     }, 0)
   }
 
-  // Handle Theorize mode selection
-  const handleTheorizeMode = (modeId) => {
-    const preset = presets.find(p => p.id === 'theorize')
+  // Handle Analyze mode selection
+  const handleAnalyzeMode = (modeId) => {
+    const preset = presets.find(p => p.id === 'analyze')
     if (!preset) return
 
     let prompt
     if (modeId === 'reverse') {
-      prompt = THEORIZE_REVERSE_PROMPT
+      prompt = ANALYZE_REVERSE_PROMPT
     } else if (modeId === 'directed') {
       if (!directedContext.trim()) {
         // Keep modal open, user needs to enter context
         return
       }
-      prompt = THEORIZE_DIRECTED_PREAMBLE.replace('{deployment_context}', directedContext.trim()) + preset.prompt
+      prompt = ANALYZE_DIRECTED_PREAMBLE.replace('{deployment_context}', directedContext.trim()) + preset.prompt
     } else {
-      // Comprehensive — use the default theorize prompt
+      // Comprehensive — use the default analyze prompt
       prompt = preset.prompt
     }
 
@@ -591,7 +591,7 @@ export default function SimpleChatTab({
     })
 
     setInputText(query)
-    setShowTheorizeModes(false)
+    setShowAnalyzeModes(false)
     setDirectedContext('')
 
     setTimeout(() => {
@@ -605,7 +605,7 @@ export default function SimpleChatTab({
     setConversationId(null)
     setGluonId(null)
     setSelectedPresetId(null)
-    setShowTheorizeModes(false)
+    setShowAnalyzeModes(false)
     setDirectedContext('')
     clearAllContexts()
   }
@@ -816,25 +816,25 @@ export default function SimpleChatTab({
         )}
       </div>
 
-      {/* Theorize Mode Selector */}
-      {showTheorizeModes && (
+      {/* Analyze Mode Selector */}
+      {showAnalyzeModes && (
         <div className="mb-4 p-3 bg-surface rounded-lg border border-subtle shadow-lg">
           <div className="flex items-center justify-between mb-3">
             <label className="text-[11px] font-semibold tracking-[0.08em] uppercase text-camel">
-              Theorize Mode
+              Analyze Mode
             </label>
             <button
-              onClick={() => { setShowTheorizeModes(false); setDirectedContext('') }}
+              onClick={() => { setShowAnalyzeModes(false); setDirectedContext('') }}
               className="text-muted hover:text-secondary text-xs"
             >
               Cancel
             </button>
           </div>
           <div className="space-y-2">
-            {THEORIZE_MODES.map(mode => (
+            {ANALYZE_MODES.map(mode => (
               <div key={mode.id}>
                 <button
-                  onClick={() => !mode.requiresInput && handleTheorizeMode(mode.id)}
+                  onClick={() => !mode.requiresInput && handleAnalyzeMode(mode.id)}
                   className={`
                     w-full text-left px-3 py-2 rounded transition-all
                     ${mode.requiresInput
@@ -857,12 +857,12 @@ export default function SimpleChatTab({
                                  placeholder-muted/50 focus:outline-none focus:ring-1 focus:ring-camel/50"
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && directedContext.trim()) {
-                          handleTheorizeMode('directed')
+                          handleAnalyzeMode('directed')
                         }
                       }}
                     />
                     <button
-                      onClick={() => handleTheorizeMode('directed')}
+                      onClick={() => handleAnalyzeMode('directed')}
                       disabled={!directedContext.trim()}
                       className={`
                         px-3 py-1.5 rounded text-[11px] font-medium transition-all

@@ -110,8 +110,8 @@ TEXT TO ANALYZE:
         "source_types": None,  # All source types
     },
     {
-        "id": "theorize",
-        "name": "Theorize",
+        "id": "analyze",
+        "name": "Analyze",
         "description": "Connect to theoretical frameworks across disciplines",
         "prompt": """You are analyzing {source_type}. Your goal is a rigorous theoretical analysis that connects this text to established intellectual traditions.
 
@@ -458,7 +458,7 @@ async def seed_quick_action_presets(db):
     now = datetime.now().isoformat()
 
     # Quick action preset IDs (updated for consolidated set)
-    quick_action_ids = {'summarize', 'explain', 'critique', 'theorize'}
+    quick_action_ids = {'summarize', 'explain', 'critique', 'analyze'}
 
     for preset in SYSTEM_PRESETS:
         preset_id = preset["id"]

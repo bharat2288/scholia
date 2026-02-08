@@ -12,7 +12,7 @@ Scholia offers two fundamentally different ways to interact with an LLM about yo
 |---|---|---|
 | **Metaphor** | Ask a librarian a question | Hire a research assistant |
 | **Scope** | Single source | Multiple sources |
-| **State** | Stateless (client holds history) | Stateful (server-side conversation) |
+| **State** | Persisted (auto-saved as notes) | Stateful (server-side conversation) |
 | **Tools** | None — pure text-in, text-out | 30+ tools for search, retrieval, cross-referencing |
 | **Iterations** | 1 API call per message | Up to 20 tool-use loops per message |
 | **Use case** | "What does this passage mean?" | "How does this author's argument compare across these three papers?" |
@@ -26,10 +26,10 @@ Chat lives in the Reader sidebar. You're reading a document, you highlight somet
 ### How It Works
 
 ```
-User message + document context → Single API call → Response
+User message + document context → Single API call → Response → Auto-save as gluon note
 ```
 
-There's no server-side memory. The frontend sends the full conversation history with each request. This is a deliberate choice — it keeps the backend simple and makes Chat feel instant.
+Chat conversations are persisted server-side: each exchange is stored in the `conversations` + `council_messages` tables, and the full conversation is auto-saved as a gluon note (updated on each new message). The frontend sends the conversation history with each request for prompt caching benefits, but the backend maintains the authoritative record. A "View Note" button in the UI links directly to the auto-saved gluon.
 
 ### Prompt Caching
 
@@ -148,7 +148,7 @@ A single section might be 15,000 characters. Feeding that untruncated into the c
 Chat and Research Sessions aren't isolated — they share infrastructure:
 
 1. **Same LLM service**: Both use `ChatService` for the actual API calls. Research Sessions just add tool definitions and iteration logic on top.
-2. **Same presets**: Analytical presets (summarize, theorize, critique) work in both modes. In Chat, they're one-shot. In Research, the agent can use tools to enhance its analysis.
+2. **Same presets**: Analytical presets (summarize, analyze, critique) work in both modes. In Chat, they're one-shot. In Research, the agent can use tools to enhance its analysis.
 3. **Same source format**: Both consume the same `[SECTION]`/`[PAGE]`/`[FIGURE]` markup from the extraction pipeline.
 4. **Cost tracking**: Both calculate and display per-query costs, so you always know what a question costs.
 
@@ -158,9 +158,9 @@ The distinction is about **depth vs. speed**. Chat is for when you know what you
 
 ## Design Decisions
 
-### Why stateless Chat?
+### Why auto-save Chat as notes?
 
-Server-side conversation state adds complexity (cleanup, persistence, session management) for minimal benefit in a reading context. When you're reading a paper, your questions are usually about *this passage* or *this section*. The full conversation fits comfortably in a single API call. If you need persistent, multi-turn investigation — that's what Research Sessions are for.
+Every chat exchange is automatically saved as a gluon note attached to the source. This means your analytical conversations aren't ephemeral — they become part of your annotations, searchable and browsable alongside highlights and manual notes. The conversation is also persisted in the `conversations` table for history browsing. The frontend still sends full history with each request (for prompt caching), but the backend is the source of truth.
 
 ### Why 20 iterations max?
 

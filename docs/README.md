@@ -7,7 +7,7 @@ Design decisions and architectural documentation for Scholia's core systems.
 ### LLM Integration
 
 - **[Chat vs. Research Sessions](chat-vs-research.md)** — Two modes of engagement: stateless Q&A for quick questions, agentic tool-using loop for deep investigation across multiple sources
-- **[Analytical Presets](presets.md)** — One-click analytical moves (summarize, theorize, critique, etc.) with source-type-aware filtering and carefully structured prompts
+- **[Analytical Presets](presets.md)** — One-click analytical moves (summarize, analyze, critique, etc.) with source-type-aware filtering and carefully structured prompts
 - **[Council Mode](council-mode.md)** — Multi-model deliberation with parallel execution and chairman synthesis
 
 ### Infrastructure

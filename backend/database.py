@@ -891,7 +891,7 @@ async def _create_schema():
 
         # Delete system presets that have been absorbed into others or are legacy
         removed_ids = (
-            'key-claims', 'define', 'connect',  # Merged into summarize/explain/theorize
+            'key-claims', 'define', 'connect',  # Merged into summarize/explain/analyze
             'summary', 'counterarguments', 'eli5',  # Legacy presets from earlier versions
         )
         for removed_id in removed_ids:
@@ -905,6 +905,21 @@ async def _create_schema():
         )
         await _db.commit()
         print("Migration complete: Removed merged/legacy presets")
+
+    # Migration: Rename 'theorize' preset to 'analyze'
+    cursor = await _db.execute(
+        "SELECT name FROM _migrations WHERE name = 'presets_rename_theorize_analyze'"
+    )
+    if not await cursor.fetchone():
+        print("Migrating: Renaming 'theorize' preset to 'analyze'...")
+        await _db.execute(
+            "UPDATE council_presets SET id = 'analyze' WHERE id = 'theorize' AND is_system = 1"
+        )
+        await _db.execute(
+            "INSERT OR IGNORE INTO _migrations (name) VALUES ('presets_rename_theorize_analyze')"
+        )
+        await _db.commit()
+        print("Migration complete: Renamed theorize -> analyze")
 
     # Seed system presets (after migrations add required columns)
     from services.council.presets import seed_system_presets

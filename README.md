@@ -17,7 +17,7 @@ But my workflow kept bumping against edges:
 
 - **LLM integration behind a quota wall.** RemNote's AI features require a subscription with limited credits. I'm already paying for API access directly — I'd rather route that into my own reader with no throttling, full model choice, and custom prompting.
 - **Research doesn't live in one format.** I read PDFs, but I also consume web articles, Twitter threads, and YouTube lectures. I wanted a single system that normalizes all of these into the same reading and annotation experience.
-- **Preset analytical moves.** Over years of academic reading, I developed recurring ways of engaging with texts — summarize, theorize, critique, extract claims. I wanted those baked into the tool as one-click presets, not copy-pasted into a separate chat window.
+- **Preset analytical moves.** Over years of academic reading, I developed recurring ways of engaging with texts — summarize, analyze, critique, extract claims. I wanted those baked into the tool as one-click presets, not copy-pasted into a separate chat window.
 - **Extensibility.** I built a [RemNote plugin](https://github.com/bharat2288/notes-processor) and found myself doing ongoing technical work to maintain it. At that point, I decided to channel that energy into building exactly what I wanted.
 
 ---
@@ -55,10 +55,10 @@ But my workflow kept bumping against edges:
 - Per-query cost tracking
 
 ### 🧪 Analytical Presets
-- One-click preset prompts: summarize, theorize, critique, concept-map, explain, quotables, research questions
+- One-click preset prompts: summarize, analyze, critique, concept-map, explain, quotables, research questions
 - Source-type-aware filtering (different presets surface for documents vs. web vs. video)
 - Full-document vs. selection variants
-- Theorize mode with three sub-modes: Comprehensive, Reverse, Directed
+- Analyze mode with three sub-modes: Comprehensive, Reverse, Directed
 - Create custom presets alongside system defaults
 
 ### 🔬 Research Sessions
@@ -266,7 +266,7 @@ Detailed documentation on design decisions and architecture:
 - [x] Web/tweet/video clipping
 - [x] Gluon system (notes + linking)
 - [x] LLM chat integration
-- [x] Analytical presets (summarize, theorize, critique, etc.)
+- [x] Analytical presets (summarize, analyze, critique, etc.)
 - [x] Research Sessions (multi-document AI with tool use)
 - [x] Metadata management (DOI/ISBN lookup, AI suggestion)
 - [x] WhatsApp capture
