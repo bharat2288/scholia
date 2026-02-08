@@ -213,8 +213,7 @@ This is alpha software. Things may break. The database schema may change.
 
 ## Acknowledgments
 
-- Name inspired by [Karpathy's scholia](https://github.com/karpathy/scholia)
-- Built as a RemNote replacement for academic workflows
+- Deeply influenced by [RemNote](https://www.remnote.com/) — its model of bidirectional linking and highlights-as-objects shaped this project's design
 - PDF extraction powered by [Marker](https://github.com/VikParuchuri/marker) and [dots-ocr](https://github.com/ai-forever/dots-ocr)
 
 ---
