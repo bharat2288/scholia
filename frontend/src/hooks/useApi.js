@@ -610,6 +610,8 @@ export function useUpdateRawText() {
       queryClient.invalidateQueries({ queryKey: ['sources', sourceId, 'raw'] })
       queryClient.invalidateQueries({ queryKey: ['reading', sourceId] })
       queryClient.invalidateQueries({ queryKey: ['sources', sourceId] })
+      // Re-fetch highlights with updated offsets after edit
+      queryClient.invalidateQueries({ queryKey: ['highlights', sourceId] })
     },
   })
 }

@@ -2422,8 +2422,9 @@ function parseContentIntoSegments(content, sections, figures, sourceId) {
         segment.text = para.replace(/```/g, '').trim()
       }
     } else if (para.trim().startsWith('>')) {
-      // Blockquote
+      // Blockquote — preserve original for offset mapping
       segment.type = 'blockquote'
+      segment.originalText = para
       segment.text = para.split('\n').map(line => line.replace(/^>\s?/, '')).join('\n')
     } else if (para.includes('[TIMESTAMP')) {
       // Video timestamp marker - may have transcript text following it
@@ -2444,6 +2445,9 @@ function parseContentIntoSegments(content, sections, figures, sourceId) {
         const textAfter = para.replace(/\[TIMESTAMP\s+[^\]]+\]\n?/, '').trim()
         if (textAfter) {
           segment.text = textAfter
+          // Compute offset to the actual text content (skip timestamp marker)
+          const textIdx = para.indexOf(textAfter)
+          segment.textOffset = segment.offset + (textIdx >= 0 ? textIdx : 0)
         }
       }
     }
@@ -2537,7 +2541,7 @@ function Segment({ segment, segmentIndex, highlights, highlightMap, onCopySectio
             <p className="text-secondary leading-relaxed mb-4">
               <OffsetText
                 text={segment.text}
-                baseOffset={segment.offset}
+                baseOffset={segment.textOffset || segment.offset}
                 highlights={highlights}
               />
             </p>
@@ -2640,16 +2644,28 @@ function Segment({ segment, segmentIndex, highlights, highlightMap, onCopySectio
         </div>
       )
 
-    case 'blockquote':
+    case 'blockquote': {
+      // Render per-line with correct offsets accounting for '> ' prefix stripping
+      const originalLines = (segment.originalText || segment.text).split('\n')
+      let lineOffset = segment.offset
       return (
         <blockquote className="my-6 pl-4 border-l-2 border-camel/50 text-secondary italic">
-          <OffsetText
-            text={segment.text}
-            baseOffset={segment.offset}
-            highlights={highlights}
-          />
+          {originalLines.map((line, i) => {
+            const cleanLine = line.replace(/^>\s?/, '')
+            const prefixLen = line.length - cleanLine.length
+            const textOffset = lineOffset + prefixLen
+            lineOffset += line.length + 1  // +1 for \n
+            if (!cleanLine) return <br key={i} />
+            return (
+              <span key={i}>
+                <OffsetText text={cleanLine} baseOffset={textOffset} highlights={highlights} />
+                {i < originalLines.length - 1 && <br />}
+              </span>
+            )
+          })}
         </blockquote>
       )
+    }
 
     default:
       // Regular paragraph - render with offset tracking and highlights

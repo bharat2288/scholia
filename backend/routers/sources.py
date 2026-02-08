@@ -2059,6 +2059,148 @@ def _parse_sections(content: str, source_id: str) -> list:
     return sections
 
 
+def _find_all_occurrences(text: str, substring: str) -> list[int]:
+    """Find all starting positions of substring in text."""
+    positions = []
+    start = 0
+    while True:
+        idx = text.find(substring, start)
+        if idx == -1:
+            break
+        positions.append(idx)
+        start = idx + 1
+    return positions
+
+
+def _find_section_id_at_offset(
+    offset: int, sections: list[dict], source_id: str
+) -> str | None:
+    """Find which section contains the given character offset."""
+    for i, section in enumerate(sections):
+        if section["start_offset"] <= offset < section["end_offset"]:
+            return f"{source_id}-s{i}"
+    return None
+
+
+async def _relocate_highlights(
+    db, source_id: str, old_content: str, new_content: str, new_sections: list[dict]
+) -> dict:
+    """
+    Relocate highlight offsets after document edit.
+    Uses stored highlight text (content field) to find new positions.
+    """
+    cursor = await db.execute("""
+        SELECT id, content, start_offset, end_offset
+        FROM gluons WHERE source_id = ? AND type = 'highlight'
+    """, [source_id])
+    highlights = await cursor.fetchall()
+
+    if not highlights:
+        return {"relocated": 0, "failed": 0, "total": 0}
+
+    relocated = 0
+    failed = 0
+
+    for h_id, h_content, old_start, old_end in highlights:
+        if not h_content:
+            failed += 1
+            continue
+
+        # Try exact match in new content
+        matches = _find_all_occurrences(new_content, h_content)
+
+        new_start = None
+        if len(matches) == 1:
+            # Unique match — unambiguous
+            new_start = matches[0]
+        elif len(matches) > 1:
+            # Multiple matches — pick the one closest to the old position
+            new_start = min(matches, key=lambda m: abs(m - old_start))
+        else:
+            # No exact match — try normalized whitespace
+            normalized_query = re.sub(r'\s+', ' ', h_content.strip())
+            normalized_content = re.sub(r'\s+', ' ', new_content)
+            norm_matches = _find_all_occurrences(normalized_content, normalized_query)
+            if norm_matches:
+                new_start = min(norm_matches, key=lambda m: abs(m - old_start))
+
+        if new_start is not None:
+            new_end = new_start + len(h_content)
+            new_section_id = _find_section_id_at_offset(
+                new_start, new_sections, source_id
+            )
+
+            await db.execute("""
+                UPDATE gluons
+                SET start_offset = ?, end_offset = ?, section_id = ?, updated_at = ?
+                WHERE id = ?
+            """, [new_start, new_end, new_section_id,
+                  datetime.now().isoformat(), h_id])
+            relocated += 1
+        else:
+            failed += 1
+
+    return {"relocated": relocated, "failed": failed, "total": len(highlights)}
+
+
+async def _reindex_highlights_for_source(
+    db, source_id: str, content: str, sections: list[dict]
+) -> dict:
+    """
+    Reindex all highlight offsets by matching stored text against current content.
+    Used by batch migration and can be called after any edit.
+    """
+    cursor = await db.execute("""
+        SELECT id, content, start_offset, end_offset
+        FROM gluons
+        WHERE source_id = ? AND type = 'highlight' AND content IS NOT NULL
+    """, [source_id])
+    highlights = await cursor.fetchall()
+
+    if not highlights:
+        return {"fixed": 0, "already_correct": 0, "failed": 0, "total": 0}
+
+    fixed = 0
+    already_correct = 0
+    failed = 0
+
+    for h_id, h_content, old_start, old_end in highlights:
+        matches = _find_all_occurrences(content, h_content)
+
+        if len(matches) == 1:
+            new_start = matches[0]
+        elif len(matches) > 1:
+            # Pick closest to old position
+            new_start = min(matches, key=lambda m: abs(m - old_start))
+        else:
+            failed += 1
+            continue
+
+        new_end = new_start + len(h_content)
+
+        if new_start == old_start and new_end == old_end:
+            already_correct += 1
+            continue
+
+        new_section_id = _find_section_id_at_offset(
+            new_start, sections, source_id
+        )
+        await db.execute("""
+            UPDATE gluons
+            SET start_offset = ?, end_offset = ?, section_id = ?, updated_at = ?
+            WHERE id = ?
+        """, [new_start, new_end, new_section_id,
+              datetime.now().isoformat(), h_id])
+        fixed += 1
+
+    return {
+        "fixed": fixed,
+        "already_correct": already_correct,
+        "failed": failed,
+        "total": len(highlights),
+    }
+
+
 # ============================================================
 # Section Editor Endpoints
 # ============================================================
@@ -2147,12 +2289,12 @@ async def update_raw_text(source_id: str, update: RawTextUpdate):
     Save edited raw text and re-parse sections.
 
     This will:
-    1. Write the new content to the content file
-    2. Re-parse sections from the updated content
-    3. Update the sections table
-    4. Update FTS index
-
-    Note: Highlights may need adjustment if offsets changed significantly.
+    1. Read old content for highlight relocation
+    2. Write the new content to the content file
+    3. Re-parse sections from the updated content
+    4. Update the sections table
+    5. Relocate highlight offsets to match new content
+    6. Update FTS index
     """
     db = await get_db()
 
@@ -2172,6 +2314,11 @@ async def update_raw_text(source_id: str, update: RawTextUpdate):
         raise HTTPException(status_code=400, detail="No content file for this source")
 
     content_file = Path(content_path)
+
+    # Read old content before overwriting (needed for highlight relocation)
+    old_content = ""
+    if content_file.exists():
+        old_content = content_file.read_text(encoding="utf-8")
 
     # Write the new content
     content_file.write_text(update.content, encoding="utf-8")
@@ -2194,6 +2341,11 @@ async def update_raw_text(source_id: str, update: RawTextUpdate):
             section["start_offset"], section["end_offset"], i, None
         ])
 
+    # Relocate highlight offsets to match new content
+    highlight_stats = await _relocate_highlights(
+        db, src_id, old_content, update.content, new_sections
+    )
+
     # Update FTS
     await db.execute("""
         DELETE FROM sources_fts WHERE rowid = (SELECT rowid FROM sources WHERE id = ?)
@@ -2214,7 +2366,8 @@ async def update_raw_text(source_id: str, update: RawTextUpdate):
         "sections_count": len(new_sections),
         "sections": new_sections,
         "char_count": len(update.content),
-        "updated_at": now
+        "updated_at": now,
+        "highlights_relocated": highlight_stats,
     }
 
 

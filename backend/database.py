@@ -1143,6 +1143,58 @@ async def _create_schema():
         await _db.commit()
         print("Migration complete: Added metadata_skip column")
 
+    # Migration: Reindex highlight offsets by matching stored text against content files
+    # Fixes highlights created with wrong offsets (e.g., in blockquotes where > prefix was stripped)
+    cursor = await _db.execute(
+        "SELECT name FROM _migrations WHERE name = 'reindex_highlight_offsets'"
+    )
+    if not await cursor.fetchone():
+        print("Migrating: Reindexing highlight offsets...")
+        from routers.sources import (
+            _parse_sections,
+            _reindex_highlights_for_source,
+        )
+
+        # Find all sources that have highlights
+        cursor = await _db.execute("""
+            SELECT DISTINCT g.source_id, s.content_path
+            FROM gluons g
+            JOIN sources s ON g.source_id = s.id
+            WHERE g.type = 'highlight' AND g.content IS NOT NULL
+              AND s.content_path IS NOT NULL
+        """)
+        source_rows = await cursor.fetchall()
+
+        total_fixed = 0
+        total_correct = 0
+        total_failed = 0
+        sources_processed = 0
+
+        for source_id, content_path in source_rows:
+            content_file = Path(content_path)
+            if not content_file.exists():
+                continue
+
+            content = content_file.read_text(encoding="utf-8")
+            sections = _parse_sections(content, source_id)
+            stats = await _reindex_highlights_for_source(
+                _db, source_id, content, sections
+            )
+            total_fixed += stats["fixed"]
+            total_correct += stats["already_correct"]
+            total_failed += stats["failed"]
+            sources_processed += 1
+
+        # Mark migration as done
+        await _db.execute(
+            "INSERT INTO _migrations (name) VALUES ('reindex_highlight_offsets')"
+        )
+        await _db.commit()
+        print(
+            f"Migration complete: Reindexed highlights across {sources_processed} sources "
+            f"({total_fixed} fixed, {total_correct} already correct, {total_failed} failed)"
+        )
+
     await _db.commit()
     print("Database schema created/verified")
 
