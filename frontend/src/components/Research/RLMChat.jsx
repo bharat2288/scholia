@@ -128,7 +128,7 @@ export default function RLMChat({ sessionId }) {
               )}
 
               {/* Streaming result (before saved to DB) */}
-              {result && !isStreaming && (
+              {result && !isStreaming && !messages.some(m => m.id === result.message_id) && (
                 <MessageBubble
                   message={{
                     id: result.message_id,
