@@ -247,6 +247,19 @@ This is alpha software. Things may break. The database schema may change.
 
 ---
 
+## Deep Dives
+
+Detailed documentation on design decisions and architecture:
+
+- **[Chat vs. Research Sessions](docs/chat-vs-research.md)** — Stateless Q&A vs. agentic multi-source investigation
+- **[The PDF Pipeline](docs/pdf-pipeline.md)** — Multi-tier extraction, RunPod GPU offloading, Section Editor
+- **[Gluons: The Knowledge Graph](docs/gluons.md)** — Bidirectional linking, highlights-as-objects, and the `[[reference]]` system
+- **[Metadata & Autotagging](docs/metadata-autotagging.md)** — DOI/ISBN lookup, AI-powered suggestion, batch processing
+- **[Analytical Presets](docs/presets.md)** — One-click analytical moves with structured prompts
+- **[Council Mode](docs/council-mode.md)** — Multi-model deliberation and synthesis
+
+---
+
 ## Roadmap
 
 - [x] Core reading + highlighting

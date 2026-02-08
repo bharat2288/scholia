@@ -38,7 +38,6 @@ data/
 # Development scripts and artifacts
 compare_docs.py
 scripts/
-docs/
 inbox/
 nul
 
