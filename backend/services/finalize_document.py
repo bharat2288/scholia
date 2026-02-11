@@ -266,6 +266,10 @@ def finalize_document(
                         new_name = name_without_prefix.replace(clean_pattern, scholia_name)
                         break
 
+            # Clean up stray spaces (e.g. trailing space in original name
+            # leaves "scholia_name _page_0.json" instead of "scholia_name_page_0.json")
+            new_name = re.sub(r'\s+_page_', '_page_', new_name)
+
             dst_file = method_folder / new_name
             shutil.copy2(str(src_file), str(dst_file))
 
