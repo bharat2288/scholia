@@ -1278,6 +1278,7 @@ function BatchMetadataSuggestionModal({ sources, onClose, onSuccess }) {
   const [results, setResults] = useState(null)
   const [skippedSources, setSkippedSources] = useState([])
   const [selectedSuggestions, setSelectedSuggestions] = useState({}) // { sourceId: { field: true/false } }
+  const [editedValues, setEditedValues] = useState({}) // { sourceId: { field: "edited value" } }
   const [applyingAll, setApplyingAll] = useState(false)
 
   // Start fetching suggestions when modal opens
@@ -1314,6 +1315,22 @@ function BatchMetadataSuggestionModal({ sources, onClose, onSuccess }) {
     }))
   }
 
+  // Edit a suggestion value
+  const editValue = (sourceId, field, newValue) => {
+    setEditedValues(prev => ({
+      ...prev,
+      [sourceId]: {
+        ...(prev[sourceId] || {}),
+        [field]: newValue
+      }
+    }))
+  }
+
+  // Get the current value for a suggestion (edited or original)
+  const getValue = (sourceId, field, originalValue) => {
+    return editedValues[sourceId]?.[field] ?? originalValue
+  }
+
   // Apply selected suggestions for a single source
   const applyForSource = async (sourceId) => {
     const result = results.find(r => r.source_id === String(sourceId))
@@ -1322,7 +1339,7 @@ function BatchMetadataSuggestionModal({ sources, onClose, onSuccess }) {
     const updates = {}
     for (const suggestion of result.suggestions) {
       if (selectedSuggestions[sourceId]?.[suggestion.field]) {
-        updates[suggestion.field] = suggestion.value
+        updates[suggestion.field] = getValue(sourceId, suggestion.field, suggestion.value)
       }
     }
 
@@ -1467,6 +1484,8 @@ function BatchMetadataSuggestionModal({ sources, onClose, onSuccess }) {
                     onToggle={(field) => toggleSuggestion(result.source_id, field)}
                     onApply={() => applyForSource(result.source_id)}
                     isApplying={updateSource.isPending}
+                    editedValues={editedValues[result.source_id] || {}}
+                    onEditValue={(field, val) => editValue(result.source_id, field, val)}
                   />
                 ))
               )}
@@ -1522,7 +1541,7 @@ function BatchMetadataSuggestionModal({ sources, onClose, onSuccess }) {
  * ======================
  * Shows AI suggestions for a single source with checkboxes to select/deselect.
  */
-function SourceSuggestionCard({ result, sourceTitle, selections, onToggle, onApply, isApplying }) {
+function SourceSuggestionCard({ result, sourceTitle, selections, onToggle, onApply, isApplying, editedValues = {}, onEditValue }) {
   if (!result.has_suggestions) {
     return null // Don't render sources without suggestions
   }
@@ -1567,6 +1586,8 @@ function SourceSuggestionCard({ result, sourceTitle, selections, onToggle, onApp
             suggestion={suggestion}
             selected={selections[suggestion.field] || false}
             onToggle={() => onToggle(suggestion.field)}
+            editedValue={editedValues[suggestion.field]}
+            onEditValue={(val) => onEditValue(suggestion.field, val)}
           />
         ))}
       </div>
@@ -1605,8 +1626,11 @@ function SourceSuggestionCard({ result, sourceTitle, selections, onToggle, onApp
  * ==============
  * A single metadata field suggestion with confidence indicator.
  */
-function SuggestionRow({ suggestion, selected, onToggle }) {
+function SuggestionRow({ suggestion, selected, onToggle, editedValue, onEditValue }) {
   const { field, value, confidence, confidence_label } = suggestion
+  const [isEditing, setIsEditing] = useState(false)
+  const displayValue = editedValue ?? value
+  const isModified = editedValue != null && editedValue !== value
 
   // Confidence colors
   const confidenceStyles = {
@@ -1637,13 +1661,16 @@ function SuggestionRow({ suggestion, selected, onToggle }) {
     url: 'URL'
   }
 
+  // Long-form fields get a textarea
+  const isLongField = ['abstract', 'keywords'].includes(field)
+
   return (
-    <label className="flex items-start gap-3 p-2 rounded hover:bg-elevated cursor-pointer group">
+    <div className="flex items-start gap-3 p-2 rounded hover:bg-elevated group">
       <input
         type="checkbox"
         checked={selected}
         onChange={onToggle}
-        className="mt-1 w-4 h-4 rounded border-subtle bg-base text-camel focus:ring-camel focus:ring-offset-0"
+        className="mt-1 w-4 h-4 rounded border-subtle bg-base text-camel focus:ring-camel focus:ring-offset-0 cursor-pointer"
       />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5">
@@ -1653,11 +1680,53 @@ function SuggestionRow({ suggestion, selected, onToggle }) {
           <span className={`text-[10px] px-1.5 py-0.5 rounded ${style.bg} ${style.text}`}>
             {Math.round(confidence * 100)}%
           </span>
+          {isModified && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-camel/20 text-camel">
+              edited
+            </span>
+          )}
         </div>
-        <p className={`text-sm ${selected ? 'text-primary' : 'text-secondary'} line-clamp-2`}>
-          {value}
-        </p>
+
+        {isEditing ? (
+          isLongField ? (
+            <textarea
+              autoFocus
+              value={displayValue}
+              onChange={(e) => onEditValue(e.target.value)}
+              onBlur={() => setIsEditing(false)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setIsEditing(false)
+              }}
+              rows={3}
+              className="w-full text-sm text-primary bg-base border border-camel/40 rounded px-2 py-1 focus:outline-none focus:border-camel resize-y"
+            />
+          ) : (
+            <input
+              autoFocus
+              type="text"
+              value={displayValue}
+              onChange={(e) => onEditValue(e.target.value)}
+              onBlur={() => setIsEditing(false)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === 'Escape') setIsEditing(false)
+              }}
+              className="w-full text-sm text-primary bg-base border border-camel/40 rounded px-2 py-1 focus:outline-none focus:border-camel"
+            />
+          )
+        ) : (
+          <p
+            onClick={() => setIsEditing(true)}
+            className={`text-sm cursor-text rounded px-1 -mx-1 transition-colors
+              ${selected ? 'text-primary' : 'text-secondary'}
+              hover:bg-base hover:ring-1 hover:ring-subtle
+              ${isLongField ? '' : 'line-clamp-2'}
+            `}
+            title="Click to edit"
+          >
+            {displayValue}
+          </p>
+        )}
       </div>
-    </label>
+    </div>
   )
 }
