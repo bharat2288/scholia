@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { useSources, useHealth, useDeleteSource, useSourceGluonStats, useRefreshSources, useBatchSuggestMetadata, useUpdateSource } from '../../hooks/useApi'
+import { useSources, useHealth, useDeleteSource, useSourceGluonStats, useRefreshSources, useBatchSuggestMetadata, useUpdateSource, useFindOrCreateTags, useFindOrCreatePeople } from '../../hooks/useApi'
 import useLibraryStore from '../../stores/useLibraryStore'
 import MetadataEditModal from '../common/MetadataEditModal'
 import AddSourceModal from '../common/AddSourceModal'
@@ -1065,7 +1065,7 @@ function SourceRow({ source, onDeleteRequest, onEditRequest, onKeywordClick, onT
       </div>
 
       {/* Keywords */}
-      <div className="flex-shrink-0 flex flex-wrap gap-1 max-w-xs">
+      <div className="flex-shrink-0 flex flex-wrap gap-1 w-48 justify-end">
         {keywords.slice(0, 4).map(kw => (
           <KeywordChip
             key={kw.id}
@@ -1275,6 +1275,8 @@ function DeleteSourceModal({ sourceId, sourceTitle, onConfirm, onCancel }) {
 function BatchMetadataSuggestionModal({ sources, onClose, onSuccess }) {
   const batchSuggest = useBatchSuggestMetadata()
   const updateSource = useUpdateSource()
+  const findOrCreateTags = useFindOrCreateTags()
+  const findOrCreatePeople = useFindOrCreatePeople()
   const [results, setResults] = useState(null)
   const [skippedSources, setSkippedSources] = useState([])
   const [selectedSuggestions, setSelectedSuggestions] = useState({}) // { sourceId: { field: true/false } }
@@ -1331,21 +1333,62 @@ function BatchMetadataSuggestionModal({ sources, onClose, onSuccess }) {
     return editedValues[sourceId]?.[field] ?? originalValue
   }
 
-  // Apply selected suggestions for a single source
+  // Apply selected suggestions for a single source, creating gluons as needed
   const applyForSource = async (sourceId) => {
     const result = results.find(r => r.source_id === String(sourceId))
     if (!result) return
 
     const updates = {}
     for (const suggestion of result.suggestions) {
-      if (selectedSuggestions[sourceId]?.[suggestion.field]) {
-        updates[suggestion.field] = getValue(sourceId, suggestion.field, suggestion.value)
+      if (!selectedSuggestions[sourceId]?.[suggestion.field]) continue
+      const value = getValue(sourceId, suggestion.field, suggestion.value)
+
+      if (suggestion.field === 'keywords' && value) {
+        // Create tag gluons from semicolon/comma-separated keywords
+        const names = value.split(/[;,]/).map(n => n.trim()).filter(Boolean)
+        if (names.length > 0) {
+          try {
+            const tagResults = await findOrCreateTags.mutateAsync(names)
+            updates.keywords = tagResults.map(t => t.name).join('; ')
+            updates.keyword_gluon_ids = JSON.stringify(tagResults.map(t => t.id))
+          } catch (err) {
+            console.error('Failed to create tags:', err)
+            updates.keywords = String(value)
+          }
+        }
+      } else if (suggestion.field === 'author' && value) {
+        // Create person gluons from semicolon-separated authors
+        const names = value.split(/;/).map(n => n.trim()).filter(Boolean)
+        if (names.length > 0) {
+          try {
+            const personResults = await findOrCreatePeople.mutateAsync(names)
+            updates.author = personResults.map(p => p.name).join('; ')
+            updates.author_gluon_ids = JSON.stringify(personResults.map(p => p.id))
+          } catch (err) {
+            console.error('Failed to create authors:', err)
+            updates.author = String(value)
+          }
+        }
+      } else if (suggestion.field === 'editors' && value) {
+        // Create person gluons from semicolon-separated editors
+        const names = value.split(/;/).map(n => n.trim()).filter(Boolean)
+        if (names.length > 0) {
+          try {
+            const personResults = await findOrCreatePeople.mutateAsync(names)
+            updates.editors = personResults.map(p => p.name).join('; ')
+            updates.editor_gluon_ids = JSON.stringify(personResults.map(p => p.id))
+          } catch (err) {
+            console.error('Failed to create editors:', err)
+            updates.editors = String(value)
+          }
+        }
+      } else {
+        updates[suggestion.field] = value
       }
     }
 
     if (Object.keys(updates).length > 0) {
       await updateSource.mutateAsync({ id: sourceId, updates })
-      // Mark as applied by removing from results
       setResults(prev => prev.map(r =>
         r.source_id === String(sourceId)
           ? { ...r, applied: true }
