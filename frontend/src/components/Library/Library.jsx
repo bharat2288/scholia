@@ -265,14 +265,27 @@ export default function Library() {
   const [refreshResult, setRefreshResult] = useState(null) // Show result after refresh
   const [showClipModal, setShowClipModal] = useState(false) // Unified clip modal
   const [showBatchMetadataModal, setShowBatchMetadataModal] = useState(false) // Batch AI metadata modal
+  const [selectedIds, setSelectedIds] = useState(new Set())
 
-  // Sync fetched sources to store
+  const toggleSelection = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  const clearSelection = () => setSelectedIds(new Set())
+  const selectAllVisible = () => setSelectedIds(new Set(sources.map(s => s.id)))
+
+  // Sync fetched sources to store; clear selection when data refreshes
   useEffect(() => {
     if (data?.value) {
       setDocuments(data.value)
     } else if (Array.isArray(data)) {
       setDocuments(data)
     }
+    setSelectedIds(new Set())
   }, [data, setDocuments])
 
   // Store handles both filtering AND sorting — single source of truth
@@ -360,12 +373,20 @@ export default function Library() {
             <button
               onClick={() => setShowBatchMetadataModal(true)}
               disabled={sources.length === 0}
-              className="p-2 bg-surface border border-subtle rounded-lg text-purple-400/70 hover:text-purple-400 hover:border-purple-400/30 hover:bg-purple-400/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              title="AI metadata suggestions"
+              className="relative p-2 bg-surface border border-subtle rounded-lg text-purple-400/70 hover:text-purple-400 hover:border-purple-400/30 hover:bg-purple-400/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              title={selectedIds.size > 0
+                ? `AI suggestions for ${selectedIds.size} selected`
+                : 'AI metadata suggestions'
+              }
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
               </svg>
+              {selectedIds.size > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-purple-500 text-white text-[10px] font-bold px-1">
+                  {selectedIds.size}
+                </span>
+              )}
             </button>
             <button
               onClick={() => setShowClipModal(true)}
@@ -448,6 +469,27 @@ export default function Library() {
           toggleKeyword={toggleKeyword}
           clearFilters={clearFilters}
         />
+
+        {/* Selection Bar */}
+        {selectedIds.size > 0 && (
+          <div className="flex items-center gap-3 mb-4 px-3 py-2 bg-raised rounded-lg border border-camel/20">
+            <span className="text-sm font-medium text-camel">
+              {selectedIds.size} selected
+            </span>
+            <button
+              onClick={selectAllVisible}
+              className="text-xs text-secondary hover:text-primary transition-colors"
+            >
+              Select all ({sources.length})
+            </button>
+            <button
+              onClick={clearSelection}
+              className="text-xs text-secondary hover:text-primary transition-colors"
+            >
+              Clear
+            </button>
+          </div>
+        )}
 
         {/* Stats, Sort, and View Toggle */}
         <div className="flex items-center justify-between mb-6">
@@ -558,6 +600,8 @@ export default function Library() {
                 onKeywordClick={toggleKeyword}
                 onToggleAISkip={handleToggleAISkip}
                 activeKeywords={activeKeywords}
+                isSelected={selectedIds.has(source.id)}
+                onToggleSelect={toggleSelection}
               />
             ))}
           </div>
@@ -575,6 +619,8 @@ export default function Library() {
                 onKeywordClick={toggleKeyword}
                 onToggleAISkip={handleToggleAISkip}
                 activeKeywords={activeKeywords}
+                isSelected={selectedIds.has(source.id)}
+                onToggleSelect={toggleSelection}
               />
             ))}
           </div>
@@ -622,7 +668,10 @@ export default function Library() {
       {/* Batch Metadata Suggestion Modal */}
       {showBatchMetadataModal && (
         <BatchMetadataSuggestionModal
-          sources={sources}
+          sources={selectedIds.size > 0
+            ? sources.filter(s => selectedIds.has(s.id))
+            : sources
+          }
           onClose={() => setShowBatchMetadataModal(false)}
           onSuccess={() => refetch()}
         />
@@ -736,8 +785,8 @@ function KeywordChip({ keyword, isActive, onClick }) {
  * ===========
  * Card displaying a single source (document, web clip, etc.) in the library grid.
  */
-function SourceCard({ source, onDeleteRequest, onEditRequest, onKeywordClick, onToggleAISkip, activeKeywords = [] }) {
-  const { title, author_display, year, source_type, keywords = [], metadata_skip, authors = [] } = source
+function SourceCard({ source, onDeleteRequest, onEditRequest, onKeywordClick, onToggleAISkip, activeKeywords = [], isSelected, onToggleSelect }) {
+  const { title, author_display, year, source_type, keywords = [], metadata_skip, authors = [], editors = [] } = source
 
   const handleDelete = (e) => {
     e.preventDefault()
@@ -762,7 +811,35 @@ function SourceCard({ source, onDeleteRequest, onEditRequest, onKeywordClick, on
   const hasMoreKeywords = keywords.length > 3
 
   return (
-    <div className="group relative bg-surface rounded-lg p-5 border border-transparent shadow-lg hover:border-camel/40 hover:-translate-y-0.5 hover:shadow-[0_8px_20px_rgba(212,165,116,0.08)] transition-all duration-200">
+    <div className={`group relative bg-surface rounded-lg p-5 border shadow-lg hover:-translate-y-0.5 hover:shadow-[0_8px_20px_rgba(212,165,116,0.08)] transition-all duration-200 ${
+      isSelected ? 'border-purple-400/60 shadow-purple-400/10' : 'border-transparent hover:border-camel/40'
+    }`}>
+      {/* Selection checkbox — top-left, visible on hover or when selected */}
+      <div
+        className={`absolute top-3 left-3 z-10 transition-opacity ${
+          isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+        }`}
+      >
+        <button
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onToggleSelect(source.id)
+          }}
+          className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+            isSelected
+              ? 'bg-purple-500 border-purple-500 text-white'
+              : 'border-muted bg-base hover:border-purple-400'
+          }`}
+        >
+          {isSelected && (
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+        </button>
+      </div>
+
       {/* Action buttons */}
       <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
         {/* AI Skip toggle */}
@@ -821,8 +898,8 @@ function SourceCard({ source, onDeleteRequest, onEditRequest, onKeywordClick, on
           {title}
         </h3>
 
-        {/* Author - linked authors are clickable */}
-        {(authors.length > 0 || author_display) && (
+        {/* Author - linked authors/editors are clickable */}
+        {(authors.length > 0 || editors.length > 0 || author_display) && (
           <p className="text-secondary text-sm line-clamp-1 mb-2">
             {authors.length > 0 ? (
               authors.map((author, idx) => (
@@ -837,6 +914,24 @@ function SourceCard({ source, onDeleteRequest, onEditRequest, onKeywordClick, on
                   </Link>
                 </span>
               ))
+            ) : editors.length > 0 ? (
+              <>
+                {editors.map((editor, idx) => (
+                  <span key={editor.id}>
+                    {idx > 0 && '; '}
+                    <Link
+                      to={`/gluon/${editor.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-camel/80 hover:text-camel hover:underline transition-colors"
+                    >
+                      {editor.content}
+                    </Link>
+                  </span>
+                ))}
+                <span className="text-tertiary ml-1">
+                  {editors.length === 1 ? '(Ed.)' : '(Eds.)'}
+                </span>
+              </>
             ) : (
               author_display
             )}
@@ -870,8 +965,8 @@ function SourceCard({ source, onDeleteRequest, onEditRequest, onKeywordClick, on
  * ==========
  * Row displaying a single source in list/detail view.
  */
-function SourceRow({ source, onDeleteRequest, onEditRequest, onKeywordClick, onToggleAISkip, activeKeywords = [] }) {
-  const { title, author_display, year, source_type, keywords = [], note_count = 0, highlight_count = 0, metadata_skip, authors = [] } = source
+function SourceRow({ source, onDeleteRequest, onEditRequest, onKeywordClick, onToggleAISkip, activeKeywords = [], isSelected, onToggleSelect }) {
+  const { title, author_display, year, source_type, keywords = [], note_count = 0, highlight_count = 0, metadata_skip, authors = [], editors = [] } = source
 
   const handleDelete = (e) => {
     e.preventDefault()
@@ -892,7 +987,33 @@ function SourceRow({ source, onDeleteRequest, onEditRequest, onKeywordClick, onT
   }
 
   return (
-    <div className="group flex items-center gap-4 bg-surface rounded-lg px-4 py-3 border border-transparent hover:border-camel/40 transition-all">
+    <div className={`group flex items-center gap-4 bg-surface rounded-lg px-4 py-3 border transition-all ${
+      isSelected ? 'border-purple-400/60' : 'border-transparent hover:border-camel/40'
+    }`}>
+      {/* Selection checkbox */}
+      <div className={`flex-shrink-0 transition-opacity ${
+        isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+      }`}>
+        <button
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onToggleSelect(source.id)
+          }}
+          className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+            isSelected
+              ? 'bg-purple-500 border-purple-500 text-white'
+              : 'border-muted bg-base hover:border-purple-400'
+          }`}
+        >
+          {isSelected && (
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+        </button>
+      </div>
+
       {/* Type chip */}
       <div className="flex-shrink-0 w-20">
         <SourceTypeChip type={source_type} />
@@ -905,7 +1026,7 @@ function SourceRow({ source, onDeleteRequest, onEditRequest, onKeywordClick, onT
             {title}
           </h3>
         </Link>
-        {(authors.length > 0 || author_display) && (
+        {(authors.length > 0 || editors.length > 0 || author_display) && (
           <p className="text-secondary text-sm truncate">
             {authors.length > 0 ? (
               authors.map((author, idx) => (
@@ -919,6 +1040,23 @@ function SourceRow({ source, onDeleteRequest, onEditRequest, onKeywordClick, onT
                   </Link>
                 </span>
               ))
+            ) : editors.length > 0 ? (
+              <>
+                {editors.map((editor, idx) => (
+                  <span key={editor.id}>
+                    {idx > 0 && '; '}
+                    <Link
+                      to={`/gluon/${editor.id}`}
+                      className="text-camel/80 hover:text-camel hover:underline transition-colors"
+                    >
+                      {editor.content}
+                    </Link>
+                  </span>
+                ))}
+                <span className="text-tertiary ml-1">
+                  {editors.length === 1 ? '(Ed.)' : '(Eds.)'}
+                </span>
+              </>
             ) : (
               author_display
             )}
