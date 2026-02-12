@@ -13,6 +13,16 @@ Endpoints:
 Port: 8200
 """
 
+import os
+import sys
+
+# Fix Windows console encoding — dots.ocr outputs unicode (emojis etc.)
+# that charmap can't handle
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+if sys.stdout.encoding != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager

@@ -84,6 +84,16 @@ class BatchPersonResult(BaseModel):
     id: str
 
 
+class GluonRename(BaseModel):
+    """Rename a tag or person gluon."""
+    name: str = Field(..., min_length=1, max_length=200, description="New name")
+
+
+class GluonMerge(BaseModel):
+    """Merge this gluon into a target gluon."""
+    target_id: str = Field(..., description="ID of the gluon to merge into")
+
+
 class GluonResponse(BaseModel):
     """Response model for a gluon."""
     id: str
@@ -873,6 +883,284 @@ async def create_tag(tag: TagCreate):
         "created_at": now,
         "updated_at": now
     }
+
+
+@router.post("/{gluon_id}/rename", response_model=GluonResponse)
+async def rename_gluon(gluon_id: str, body: GluonRename):
+    """
+    Rename a tag or person gluon.
+
+    If the new name conflicts with an existing gluon of the same category,
+    returns 409 with merge preview information so the frontend can prompt
+    the user to merge.
+    """
+    db = await get_db()
+
+    # Fetch gluon
+    cursor = await db.execute(
+        "SELECT id, type, content FROM gluons WHERE id = ?",
+        [gluon_id]
+    )
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Gluon not found")
+
+    gluon_type = row[1]
+    old_content = row[2]
+
+    # Determine category and normalize name
+    if gluon_type == 'tag':
+        category = 'tag'
+        new_name = body.name.lower().strip()
+    elif gluon_type == 'note':
+        # Check if this note is a person (tagged with ##person)
+        cursor = await db.execute("""
+            SELECT 1 FROM links l
+            JOIN gluons t ON l.target_id = t.id
+            WHERE l.source_id = ? AND l.link_type = 'tag'
+              AND t.type = 'tag' AND t.content = 'person'
+        """, [gluon_id])
+        if await cursor.fetchone():
+            category = 'person'
+            new_name = body.name.strip()
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Only tags and persons can be renamed"
+            )
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Only tags and persons can be renamed"
+        )
+
+    # No-op if name unchanged
+    if new_name == old_content:
+        cursor = await db.execute("""
+            SELECT id, type, content, source_id, section_id, parent_gluon_id,
+                   created_at, updated_at
+            FROM gluons WHERE id = ?
+        """, [gluon_id])
+        row = await cursor.fetchone()
+        columns = [desc[0] for desc in cursor.description]
+        return dict(zip(columns, row))
+
+    # Check for name conflict with another gluon of the same category
+    if category == 'tag':
+        cursor = await db.execute(
+            "SELECT id, content FROM gluons WHERE type = 'tag' AND content = ? AND id != ?",
+            [new_name, gluon_id]
+        )
+    else:
+        # Person: case-insensitive match via COLLATE NOCASE
+        cursor = await db.execute("""
+            SELECT g.id, g.content FROM gluons g
+            JOIN links l ON l.source_id = g.id
+            JOIN gluons t ON l.target_id = t.id
+            WHERE g.type = 'note' AND t.type = 'tag' AND t.content = 'person'
+              AND g.content = ? COLLATE NOCASE
+              AND g.id != ?
+        """, [new_name, gluon_id])
+
+    conflict = await cursor.fetchone()
+
+    if conflict:
+        target_id = conflict[0]
+        target_content = conflict[1]
+
+        # Compute merge preview counts
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM source_gluon_links WHERE gluon_id = ?",
+            [gluon_id]
+        )
+        source_links = (await cursor.fetchone())[0]
+
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM links WHERE target_id = ?",
+            [gluon_id]
+        )
+        note_links = (await cursor.fetchone())[0]
+
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM gluons WHERE parent_gluon_id = ?",
+            [gluon_id]
+        )
+        child_notes = (await cursor.fetchone())[0]
+
+        # Duplicate source links: same source+relationship_type exists for target
+        cursor = await db.execute("""
+            SELECT COUNT(*) FROM source_gluon_links sgl1
+            WHERE sgl1.gluon_id = ?
+              AND EXISTS (
+                SELECT 1 FROM source_gluon_links sgl2
+                WHERE sgl2.gluon_id = ?
+                  AND sgl2.source_id = sgl1.source_id
+                  AND sgl2.relationship_type = sgl1.relationship_type
+              )
+        """, [gluon_id, target_id])
+        duplicate_links = (await cursor.fetchone())[0]
+
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "detail": "conflict",
+                "target": {"id": target_id, "content": target_content},
+                "merge_preview": {
+                    "source_links": source_links,
+                    "note_links": note_links,
+                    "child_notes": child_notes,
+                    "duplicate_links": duplicate_links,
+                }
+            }
+        )
+
+    # No conflict — update the gluon content
+    now = datetime.now().isoformat()
+
+    await db.execute(
+        "UPDATE gluons SET content = ?, updated_at = ? WHERE id = ?",
+        [new_name, now, gluon_id]
+    )
+
+    # Update FTS index
+    await db.execute(
+        "DELETE FROM gluons_fts WHERE rowid = (SELECT rowid FROM gluons WHERE id = ?)",
+        [gluon_id]
+    )
+    await db.execute("""
+        INSERT INTO gluons_fts (rowid, content)
+        SELECT rowid, content FROM gluons WHERE id = ?
+    """, [gluon_id])
+
+    await db.commit()
+
+    # Return updated gluon
+    cursor = await db.execute("""
+        SELECT id, type, content, source_id, section_id, parent_gluon_id,
+               created_at, updated_at
+        FROM gluons WHERE id = ?
+    """, [gluon_id])
+    row = await cursor.fetchone()
+    columns = [desc[0] for desc in cursor.description]
+    return dict(zip(columns, row))
+
+
+@router.post("/{gluon_id}/merge")
+async def merge_gluon(gluon_id: str, body: GluonMerge):
+    """
+    Merge this gluon into a target gluon.
+
+    All source links, note links, and child notes transfer to the target.
+    Duplicate links (same source + relationship_type) are removed.
+    The source gluon is deleted after merge.
+
+    Returns the surviving target gluon with full detail.
+    """
+    db = await get_db()
+    target_id = body.target_id
+
+    # Validate both gluons exist
+    cursor = await db.execute(
+        "SELECT id, type, content FROM gluons WHERE id = ?",
+        [gluon_id]
+    )
+    source_row = await cursor.fetchone()
+    if not source_row:
+        raise HTTPException(status_code=404, detail="Source gluon not found")
+
+    cursor = await db.execute(
+        "SELECT id, type, content FROM gluons WHERE id = ?",
+        [target_id]
+    )
+    target_row = await cursor.fetchone()
+    if not target_row:
+        raise HTTPException(status_code=404, detail="Target gluon not found")
+
+    # Validate same type (tag+tag or note+note for persons)
+    if source_row[1] != target_row[1]:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot merge gluons of different types"
+        )
+
+    # Step 1: Find and delete duplicate source_gluon_links
+    # (same source_id + relationship_type already exists for target)
+    cursor = await db.execute("""
+        SELECT sgl1.rowid FROM source_gluon_links sgl1
+        WHERE sgl1.gluon_id = ?
+          AND EXISTS (
+            SELECT 1 FROM source_gluon_links sgl2
+            WHERE sgl2.gluon_id = ?
+              AND sgl2.source_id = sgl1.source_id
+              AND sgl2.relationship_type = sgl1.relationship_type
+          )
+    """, [gluon_id, target_id])
+    dup_rowids = [r[0] for r in await cursor.fetchall()]
+    if dup_rowids:
+        placeholders = ','.join(['?' for _ in dup_rowids])
+        await db.execute(
+            f"DELETE FROM source_gluon_links WHERE rowid IN ({placeholders})",
+            dup_rowids
+        )
+
+    # Step 2: Move remaining source_gluon_links to target
+    await db.execute(
+        "UPDATE source_gluon_links SET gluon_id = ? WHERE gluon_id = ?",
+        [target_id, gluon_id]
+    )
+
+    # Step 3: Find and delete duplicate note links
+    # (same source_id + link_type already points to target)
+    cursor = await db.execute("""
+        SELECT l1.rowid FROM links l1
+        WHERE l1.target_id = ?
+          AND EXISTS (
+            SELECT 1 FROM links l2
+            WHERE l2.target_id = ?
+              AND l2.source_id = l1.source_id
+              AND l2.link_type = l1.link_type
+          )
+    """, [gluon_id, target_id])
+    dup_rowids = [r[0] for r in await cursor.fetchall()]
+    if dup_rowids:
+        placeholders = ','.join(['?' for _ in dup_rowids])
+        await db.execute(
+            f"DELETE FROM links WHERE rowid IN ({placeholders})",
+            dup_rowids
+        )
+
+    # Step 4: Move remaining incoming links to target
+    await db.execute(
+        "UPDATE links SET target_id = ? WHERE target_id = ?",
+        [target_id, gluon_id]
+    )
+
+    # Step 5: Re-parent child notes
+    await db.execute(
+        "UPDATE gluons SET parent_gluon_id = ? WHERE parent_gluon_id = ?",
+        [target_id, gluon_id]
+    )
+
+    # Step 6: Delete FTS entry for old gluon
+    try:
+        await db.execute(
+            "DELETE FROM gluons_fts WHERE rowid = (SELECT rowid FROM gluons WHERE id = ?)",
+            [gluon_id]
+        )
+    except Exception:
+        pass  # FTS entry may not exist for old data
+
+    # Step 7: Clean up any remaining outgoing links from old gluon
+    await db.execute("DELETE FROM links WHERE source_id = ?", [gluon_id])
+    await db.execute("DELETE FROM source_gluon_links WHERE gluon_id = ?", [gluon_id])
+
+    # Step 8: Delete old gluon
+    await db.execute("DELETE FROM gluons WHERE id = ?", [gluon_id])
+
+    await db.commit()
+
+    # Return the surviving target gluon with full connections
+    return await get_gluon(target_id)
 
 
 @router.patch("/{gluon_id}", response_model=GluonResponse)

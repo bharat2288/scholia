@@ -70,9 +70,17 @@ Backlinks are computed at query time, not stored. This means they're always up-t
 
 ---
 
-## Learning from RemNote
+## Debt to RemNote
 
-I built this after years of heavy RemNote use. Three lessons shaped the design:
+I built this after years of heavy RemNote use, and the intellectual debt is real.
+
+RemNote's fundamental unit is the **Rem** — outwardly called "rems," internally represented as "quanta" in their backend. Everything in RemNote is a Rem: a note, a flashcard, a document, a folder. This uniformity is what makes RemNote's bidirectional linking work — you're not linking "notes to documents" or "cards to pages," you're linking Rems to Rems. The type system is an overlay on a uniform base unit.
+
+Scholia's gluon system is directly modeled on this insight. Where RemNote has Rems, Scholia has gluons. The naming is different (particle physics vs. cognitive science metaphor), but the architectural principle is identical: make everything the same kind of object, then let the connections emerge.
+
+That said, RemNote's Rem system is far more mature. Their portal system (live embedding), spaced repetition integration, hierarchical document structure, and collaborative features are years ahead of what Scholia currently offers. I've learned a lot from studying their design, and there's considerably more to learn. The gluon system is functional and useful for my workflow, but it's an honest v1 — not a feature-complete alternative.
+
+Three specific lessons shaped the current design:
 
 ### 1. Highlights Should Be Objects
 

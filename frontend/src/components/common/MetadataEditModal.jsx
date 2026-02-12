@@ -544,7 +544,8 @@ export default function MetadataEditModal({ sourceId, sourceType = 'document', d
     // Handle editors - can be array of {id, content} objects (from get_source), string, or metadata field
     editors: (() => {
       const eds = documentData?.editors
-      if (Array.isArray(eds) && eds.length > 0) {
+      if (Array.isArray(eds)) {
+        // Map to string (empty array → empty string)
         return eds.map(e => typeof e === 'object' ? e.content : e).join('; ')
       }
       return eds || documentData?.metadata?.editors || ''

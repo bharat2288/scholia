@@ -489,6 +489,64 @@ export function useUpdateNote() {
 }
 
 /**
+ * Rename a tag or person gluon.
+ * On 409 (conflict), the error includes target info and merge preview counts.
+ */
+export function useRenameGluon() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async ({ id, name }) => {
+      const response = await fetch(`${API_BASE}/gluons/${id}/rename`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        const enrichedError = new Error(
+          error.detail?.detail || error.detail || 'Rename failed'
+        )
+        enrichedError.status = response.status
+        enrichedError.detail = error.detail
+        throw enrichedError
+      }
+
+      return response.json()
+    },
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: ['gluons', id] })
+      queryClient.invalidateQueries({ queryKey: ['tags'] })
+      queryClient.invalidateQueries({ queryKey: ['sources'] })
+      queryClient.invalidateQueries({ queryKey: ['people'] })
+    },
+  })
+}
+
+/**
+ * Merge a gluon into a target gluon.
+ * All links transfer to the target; source gluon is deleted.
+ */
+export function useMergeGluon() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ id, targetId }) => apiFetch(`/gluons/${id}/merge`, {
+      method: 'POST',
+      body: JSON.stringify({ target_id: targetId }),
+    }),
+    onSuccess: (_, { id, targetId }) => {
+      queryClient.invalidateQueries({ queryKey: ['gluons', id] })
+      queryClient.invalidateQueries({ queryKey: ['gluons', targetId] })
+      queryClient.invalidateQueries({ queryKey: ['tags'] })
+      queryClient.invalidateQueries({ queryKey: ['sources'] })
+      queryClient.invalidateQueries({ queryKey: ['people'] })
+    },
+  })
+}
+
+/**
  * Delete a note/gluon
  */
 export function useDeleteNote() {
@@ -625,6 +683,25 @@ export function usePreviewSections() {
       method: 'POST',
       body: JSON.stringify({ content }),
     }),
+  })
+}
+
+/**
+ * Revert last save (restore from .bak file)
+ */
+export function useRevertRawText() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (sourceId) => apiFetch(`/sources/${sourceId}/raw/revert`, {
+      method: 'POST',
+    }),
+    onSuccess: (_, sourceId) => {
+      queryClient.invalidateQueries({ queryKey: ['sources', sourceId, 'raw'] })
+      queryClient.invalidateQueries({ queryKey: ['reading', sourceId] })
+      queryClient.invalidateQueries({ queryKey: ['sources', sourceId] })
+      queryClient.invalidateQueries({ queryKey: ['highlights', sourceId] })
+    },
   })
 }
 

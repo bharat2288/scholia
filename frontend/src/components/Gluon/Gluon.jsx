@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Link, useParams, useNavigate } from 'react-router-dom'
-import { useRem, useCreateNote, useDeleteGluon, useUpdateNote } from '../../hooks/useApi'
+import { useRem, useCreateNote, useDeleteGluon, useUpdateNote, useRenameGluon, useMergeGluon } from '../../hooks/useApi'
 import { TypeIndicator } from '../common/ItemCard'
 import { MarkdownContent, useRefNavigation } from '../../utils/markdown'
 
@@ -153,11 +153,14 @@ export default function Gluon() {
   const createNote = useCreateNote()
   const deleteGluon = useDeleteGluon()
   const updateNote = useUpdateNote()
+  const renameGluon = useRenameGluon()
+  const mergeGluon = useMergeGluon()
 
   const [isAddingNote, setIsAddingNote] = useState(false)
   const [newNoteContent, setNewNoteContent] = useState('')
   const [deleteState, setDeleteState] = useState('idle') // 'idle' | 'confirm' | 'warning'
   const [associationCount, setAssociationCount] = useState(0)
+  const [mergeConflict, setMergeConflict] = useState(null) // 409 conflict data from rename
 
   // Inline editing state
   const [isEditing, setIsEditing] = useState(false)
@@ -187,6 +190,7 @@ export default function Gluon() {
   }, [isEditing])
 
   // Save edit - uses refs to always get fresh values
+  // Tags and persons route through the rename endpoint; notes use the regular update
   const handleSaveEdit = useCallback(() => {
     // Prevent double-saves
     if (isSavingRef.current) return
@@ -220,19 +224,40 @@ export default function Gluon() {
           }
         }, 0)
       } else {
-        // Save the update
-        updateNote.mutate(
-          { id, content: trimmed, sourceId: currentGluon.source_id },
-          {
-            onSettled: () => {
+        // Determine if this gluon is renameable (tag or person)
+        const isPerson = currentGluon.tags?.some(t => t.content === 'person')
+        const isRenameable = currentGluon.type === 'tag' || isPerson
+
+        if (isRenameable) {
+          // Use rename endpoint — handles conflict detection + 409 merge flow
+          renameGluon.mutateAsync({ id, name: trimmed })
+            .then(() => {
               isSavingRef.current = false
+            })
+            .catch((err) => {
+              if (err.status === 409 && err.detail?.target) {
+                // Name conflict — show merge confirmation modal
+                setMergeConflict(err.detail)
+              } else {
+                console.error('Rename failed:', err)
+              }
+              isSavingRef.current = false
+            })
+        } else {
+          // Regular note update
+          updateNote.mutate(
+            { id, content: trimmed, sourceId: currentGluon.source_id },
+            {
+              onSettled: () => {
+                isSavingRef.current = false
+              }
             }
-          }
-        )
+          )
+        }
       }
     }
     setIsEditing(false)
-  }, [id, deleteGluon, updateNote, navigate]) // Removed gluon and editContent - using refs instead
+  }, [id, deleteGluon, updateNote, renameGluon, navigate])
 
   // Keyboard handling for edit mode
   const handleEditKeyDown = (e) => {
@@ -680,6 +705,70 @@ export default function Gluon() {
           </div>
         )}
       </main>
+
+      {/* Merge confirmation modal — shown when rename finds a name conflict */}
+      {mergeConflict && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface border border-raised rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl">
+            <h3 className="text-lg font-medium text-primary mb-4">Merge Gluons?</h3>
+            <p className="text-secondary text-sm mb-4">
+              A {gluon.type === 'tag' ? 'tag' : 'person'} named
+              <span className="text-primary font-medium"> "{mergeConflict.target.content}"</span> already exists.
+              Merge <span className="text-primary font-medium">"{gluon.content}"</span> into it?
+            </p>
+
+            <div className="bg-base rounded-lg p-3 mb-4 text-sm text-tertiary space-y-1">
+              {mergeConflict.merge_preview.source_links > 0 && (
+                <p>{mergeConflict.merge_preview.source_links} source link{mergeConflict.merge_preview.source_links !== 1 ? 's' : ''} will be transferred</p>
+              )}
+              {mergeConflict.merge_preview.note_links > 0 && (
+                <p>{mergeConflict.merge_preview.note_links} note link{mergeConflict.merge_preview.note_links !== 1 ? 's' : ''} will be transferred</p>
+              )}
+              {mergeConflict.merge_preview.child_notes > 0 && (
+                <p>{mergeConflict.merge_preview.child_notes} child note{mergeConflict.merge_preview.child_notes !== 1 ? 's' : ''} will be re-parented</p>
+              )}
+              {mergeConflict.merge_preview.duplicate_links > 0 && (
+                <p>{mergeConflict.merge_preview.duplicate_links} duplicate link{mergeConflict.merge_preview.duplicate_links !== 1 ? 's' : ''} will be removed</p>
+              )}
+              {mergeConflict.merge_preview.source_links === 0 &&
+               mergeConflict.merge_preview.note_links === 0 &&
+               mergeConflict.merge_preview.child_notes === 0 && (
+                <p className="text-muted">No links to transfer — the gluon will simply be deleted.</p>
+              )}
+            </div>
+
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => {
+                  setMergeConflict(null)
+                  setEditContent(gluon.content || '')
+                }}
+                className="px-4 py-2 text-muted hover:text-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const targetId = mergeConflict.target.id
+                  mergeGluon.mutateAsync({ id, targetId })
+                    .then(() => {
+                      setMergeConflict(null)
+                      navigate(`/gluon/${targetId}`)
+                    })
+                    .catch((err) => {
+                      console.error('Merge failed:', err)
+                    })
+                }}
+                disabled={mergeGluon.isPending}
+                className="px-4 py-2 bg-camel text-base rounded-lg font-medium
+                           hover:bg-camel/90 disabled:opacity-50 transition-colors"
+              >
+                {mergeGluon.isPending ? 'Merging...' : 'Merge'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

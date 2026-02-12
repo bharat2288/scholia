@@ -1,7 +1,188 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
-import { useRawText, useUpdateRawText, usePreviewSections } from '../../hooks/useApi'
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { useRawText, useUpdateRawText, usePreviewSections, useRevertRawText } from '../../hooks/useApi'
 import { API_BASE } from '../../config'
+import CodeMirror from '@uiw/react-codemirror'
+import { EditorView, ViewPlugin, Decoration, keymap } from '@codemirror/view'
+import { RangeSetBuilder } from '@codemirror/state'
+
+// ─── CodeMirror 6: Theme ────────────────────────────────────────────────────
+
+const scholiaEditorTheme = EditorView.theme({
+  '&': {
+    backgroundColor: '#0c0f0d',
+    color: '#a8a8a8',
+    height: '100%',
+  },
+  '.cm-content': {
+    fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+    fontSize: '14px',
+    lineHeight: '1.625',
+    padding: '16px',
+    caretColor: '#d4a574',
+  },
+  '&.cm-focused .cm-cursor': {
+    borderLeftColor: '#d4a574',
+    borderLeftWidth: '2px',
+  },
+  '.cm-gutters': {
+    backgroundColor: '#1a1d1b',
+    color: '#585858',
+    borderRight: '1px solid #323832',
+  },
+  '.cm-activeLineGutter': {
+    backgroundColor: '#252a27',
+  },
+  '.cm-activeLine': {
+    backgroundColor: 'rgba(212, 165, 116, 0.05)',
+  },
+  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
+    backgroundColor: 'rgba(212, 165, 116, 0.15) !important',
+  },
+  '.cm-scroller': {
+    overflow: 'auto',
+  },
+  // Marker highlight styles
+  '.cm-marker-section': { color: '#4ade80' },
+  '.cm-marker-level': { color: '#60a5fa' },
+  '.cm-marker-title': { color: '#fafafa', fontWeight: '500' },
+  '.cm-marker-section-warn': { color: '#fb923c', backgroundColor: 'rgba(251, 146, 60, 0.1)' },
+  '.cm-marker-title-warn': { color: '#fb923c' },
+  '.cm-marker-page': { color: '#585858' },
+  '.cm-marker-figure': { color: '#a78bfa' },
+  '.cm-marker-doc-title': { color: '#facc15' },
+  '.cm-marker-footnote': { color: '#8b5cf6' },
+}, { dark: true })
+
+// ─── CodeMirror 6: Syntax Decorations ───────────────────────────────────────
+
+const markerDeco = {
+  section: Decoration.mark({ class: 'cm-marker-section' }),
+  level: Decoration.mark({ class: 'cm-marker-level' }),
+  title: Decoration.mark({ class: 'cm-marker-title' }),
+  sectionWarn: Decoration.mark({ class: 'cm-marker-section-warn' }),
+  titleWarn: Decoration.mark({ class: 'cm-marker-title-warn' }),
+  page: Decoration.mark({ class: 'cm-marker-page' }),
+  figure: Decoration.mark({ class: 'cm-marker-figure' }),
+  docTitle: Decoration.mark({ class: 'cm-marker-doc-title' }),
+  footnote: Decoration.mark({ class: 'cm-marker-footnote' }),
+}
+
+function buildMarkerDecorations(view) {
+  const builder = new RangeSetBuilder()
+
+  for (const { from, to } of view.visibleRanges) {
+    for (let pos = from; pos <= to;) {
+      const line = view.state.doc.lineAt(pos)
+      const text = line.text
+      const lf = line.from
+
+      // [SECTION] ## Title (proper section with heading level)
+      const sectionMatch = text.match(/^(\s*)(\[SECTION\])(\s*)(#{1,6})(\s+)(.*)$/)
+      if (sectionMatch) {
+        const [, indent, marker, sp1, hashes, sp2, title] = sectionMatch
+        let o = lf + indent.length
+        builder.add(o, o + marker.length, markerDeco.section)
+        o += marker.length + sp1.length
+        builder.add(o, o + hashes.length, markerDeco.level)
+        o += hashes.length + sp2.length
+        if (title) builder.add(o, o + title.length, markerDeco.title)
+        pos = line.to + 1
+        continue
+      }
+
+      // [SECTION] without # heading level (warning highlight)
+      if (/^\s*\[SECTION\]/.test(text) && !/\[SECTION\]\s*#{1,6}/.test(text)) {
+        const markerIdx = text.indexOf('[SECTION]')
+        builder.add(lf + markerIdx, lf + markerIdx + 9, markerDeco.sectionWarn)
+        const rest = text.slice(markerIdx + 9).trimStart()
+        if (rest) {
+          const restStart = text.indexOf(rest, markerIdx + 9)
+          builder.add(lf + restStart, lf + restStart + rest.length, markerDeco.titleWarn)
+        }
+        pos = line.to + 1
+        continue
+      }
+
+      // [PAGE ...] markers
+      const pageMatch = text.match(/\[PAGE\s+(?:pdf=\d+\s+doc=[^\]]*|\d+)\]/)
+      if (pageMatch) {
+        const idx = text.indexOf(pageMatch[0])
+        builder.add(lf + idx, lf + idx + pageMatch[0].length, markerDeco.page)
+        pos = line.to + 1
+        continue
+      }
+
+      // Single-tag markers
+      const tagPatterns = [
+        { tag: '[FIGURE]', d: markerDeco.figure },
+        { tag: '[TABLE]', d: markerDeco.figure },
+        { tag: '[CAPTION]', d: markerDeco.figure },
+        { tag: '[TITLE]', d: markerDeco.docTitle },
+        { tag: '[FOOTNOTE]', d: markerDeco.footnote },
+      ]
+      for (const { tag, d } of tagPatterns) {
+        const idx = text.indexOf(tag)
+        if (idx !== -1) {
+          builder.add(lf + idx, lf + idx + tag.length, d)
+          break
+        }
+      }
+
+      pos = line.to + 1
+    }
+  }
+
+  return builder.finish()
+}
+
+const markerHighlighter = ViewPlugin.fromClass(class {
+  constructor(view) {
+    this.decorations = buildMarkerDecorations(view)
+  }
+  update(update) {
+    if (update.docChanged || update.viewportChanged) {
+      this.decorations = buildMarkerDecorations(update.view)
+    }
+  }
+}, {
+  decorations: v => v.decorations,
+})
+
+// ─── CodeMirror 6: Heading Keymap (Ctrl+1-6) ───────────────────────────────
+
+function headingKeymapExtension() {
+  return keymap.of([1, 2, 3, 4, 5, 6].map(level => ({
+    key: `Ctrl-${level}`,
+    run: (view) => {
+      const pos = view.state.selection.main.head
+      const line = view.state.doc.lineAt(pos)
+      const text = line.text
+      const trimmed = text.trim()
+
+      let newText
+      if (trimmed.startsWith('[SECTION]')) {
+        if (/\[SECTION\]\s*#{1,6}/.test(trimmed)) {
+          newText = text.replace(/\[SECTION\]\s*#{1,6}\s*/, `[SECTION] ${'#'.repeat(level)} `)
+        } else {
+          newText = text.replace(/\[SECTION\]\s*/, `[SECTION] ${'#'.repeat(level)} `)
+        }
+      } else if (trimmed && !trimmed.startsWith('[')) {
+        const indent = text.match(/^\s*/)[0]
+        newText = `${indent}[SECTION] ${'#'.repeat(level)} ${trimmed}`
+      }
+
+      if (newText !== undefined) {
+        view.dispatch({
+          changes: { from: line.from, to: line.to, insert: newText },
+        })
+      }
+      return true
+    },
+  })))
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 /**
  * Section Editor
@@ -133,9 +314,11 @@ function applyFix(content, lineIndex, fixType, level = 2) {
 
 export default function SectionEditor() {
   const { id } = useParams()
+  const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const { data, isLoading, error, refetch } = useRawText(id)
   const updateRawText = useUpdateRawText()
+  const revertRawText = useRevertRawText()
   const previewSections = usePreviewSections()
 
   // Editor state
@@ -144,6 +327,9 @@ export default function SectionEditor() {
   const [previewData, setPreviewData] = useState(null)
   const [saveStatus, setSaveStatus] = useState(null) // 'saving', 'saved', 'error'
   const [pdfUrl, setPdfUrl] = useState(null)
+
+  // PDF page sync
+  const [currentPdfPage, setCurrentPdfPage] = useState(null)
 
   // Structure issues detection
   const [issues, setIssues] = useState({ missingLevels: [], potentialHeadings: [] })
@@ -156,7 +342,8 @@ export default function SectionEditor() {
   // Refs for resizing and editor
   const containerRef = useRef(null)
   const isResizing = useRef(null)
-  const textareaRef = useRef(null)
+  const editorViewRef = useRef(null)
+  const iframeRef = useRef(null)
 
   // Initialize content when data loads
   useEffect(() => {
@@ -208,39 +395,127 @@ export default function SectionEditor() {
     return () => clearTimeout(timer)
   }, [content])
 
-  // Handle content changes
-  const handleContentChange = useCallback((e) => {
-    setContent(e.target.value)
+  // Handle content changes (CM6 onChange gives plain string, not event)
+  const handleContentChange = useCallback((value) => {
+    setContent(value)
     setIsDirty(true)
     setSaveStatus(null)
   }, [])
 
-  // Jump to a specific line in the editor
+  // Jump to a specific line in the editor (via CM6 dispatch)
   const jumpToLine = useCallback((lineIndex) => {
-    if (!textareaRef.current) return
+    const view = editorViewRef.current
+    if (!view) return
 
-    const lines = content.split('\n')
-    let charIndex = 0
-    for (let i = 0; i < lineIndex; i++) {
-      charIndex += lines[i].length + 1 // +1 for newline
+    const lineNum = lineIndex + 1 // CM6 lines are 1-indexed
+    if (lineNum < 1 || lineNum > view.state.doc.lines) return
+
+    const line = view.state.doc.line(lineNum)
+    view.dispatch({
+      selection: { anchor: line.from, head: line.to },
+      effects: EditorView.scrollIntoView(line.from, { y: 'center' }),
+    })
+    view.focus()
+  }, [])
+
+  // Jump to a specific character offset (via CM6 dispatch + centered scroll).
+  // Double-dispatch: CM6 virtual rendering estimates heights for off-screen lines.
+  // First scroll gets close, triggering actual render of that region.
+  // Second scroll (after layout) lands precisely.
+  const jumpToOffset = useCallback((charOffset) => {
+    const view = editorViewRef.current
+    if (!view) return
+
+    const safeOffset = Math.min(charOffset, view.state.doc.length)
+    view.dispatch({
+      selection: { anchor: safeOffset },
+      effects: EditorView.scrollIntoView(safeOffset, { y: 'center' }),
+    })
+    // Re-scroll after CM6 has rendered the target region and measured real heights
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        view.dispatch({
+          effects: EditorView.scrollIntoView(safeOffset, { y: 'center' }),
+        })
+        view.focus()
+      })
+    })
+  }, [])
+
+  // ─── PDF page sync: parse [PAGE pdf=N] markers → offset-to-page map ────────
+  const pageMap = useMemo(() => {
+    if (!content) return []
+    const markers = []
+    const regex = /\[PAGE\s+pdf=(\d+)(?:\s+doc=[^\]]*)?\]/g
+    let match
+    while ((match = regex.exec(content)) !== null) {
+      markers.push({ offset: match.index, pdfPage: parseInt(match[1], 10) })
+    }
+    return markers
+  }, [content])
+
+  // Cursor position → current PDF page lookup
+  const handleCursorActivity = useCallback((pos) => {
+    if (pageMap.length === 0) return
+    let page = null
+    for (let i = pageMap.length - 1; i >= 0; i--) {
+      if (pageMap[i].offset <= pos) {
+        page = pageMap[i].pdfPage
+        break
+      }
+    }
+    if (page !== null) {
+      setCurrentPdfPage(prev => prev === page ? prev : page)
+    }
+  }, [pageMap])
+
+  // Navigate PDF iframe to current page (click-to-sync, avoids constant reloads)
+  const syncPdfToPage = useCallback(() => {
+    if (!iframeRef.current || !pdfUrl || !currentPdfPage) return
+    iframeRef.current.src = `${pdfUrl}#page=${currentPdfPage}`
+  }, [pdfUrl, currentPdfPage])
+
+  // Auto-jump to offset from URL param (e.g. /edit/:id?offset=1234)
+  const hasJumped = useRef(false)
+  useEffect(() => {
+    const offsetParam = searchParams.get('offset')
+    if (!offsetParam || !content || !editorViewRef.current || hasJumped.current) return
+
+    const offset = parseInt(offsetParam, 10)
+    if (isNaN(offset)) return
+
+    hasJumped.current = true
+    // Delay to ensure CM6 has processed the document and initial layout
+    const timer = setTimeout(() => jumpToOffset(offset), 400)
+    return () => clearTimeout(timer)
+  }, [content, searchParams, jumpToOffset])
+
+  // Apply a fix to an issue (via CM6 dispatch for proper undo support)
+  const handleQuickFix = useCallback((issue, level = 2) => {
+    const view = editorViewRef.current
+    if (!view) return
+
+    const lineNum = issue.lineNumber // 1-indexed, matches CM6
+    if (lineNum < 1 || lineNum > view.state.doc.lines) return
+
+    const line = view.state.doc.line(lineNum)
+    const text = line.text
+    const trimmed = text.trim()
+
+    let newText
+    if (issue.type === 'missing_level') {
+      newText = text.replace(/\[SECTION\]\s*/, `[SECTION] ${'#'.repeat(level)} `)
+    } else {
+      const indent = text.match(/^\s*/)[0]
+      newText = `${indent}[SECTION] ${'#'.repeat(level)} ${trimmed}`
     }
 
-    textareaRef.current.focus()
-    textareaRef.current.setSelectionRange(charIndex, charIndex + lines[lineIndex].length)
-
-    // Scroll to make the line visible
-    const lineHeight = 24 // approximate
-    textareaRef.current.scrollTop = Math.max(0, lineIndex * lineHeight - 100)
-  }, [content])
-
-  // Apply a fix to an issue
-  const handleQuickFix = useCallback((issue, level = 2) => {
-    const fixType = issue.type === 'missing_level' ? 'add_level' : 'make_section'
-    const newContent = applyFix(content, issue.lineIndex, fixType, level)
-    setContent(newContent)
-    setIsDirty(true)
-    setSaveStatus(null)
-  }, [content])
+    if (newText !== undefined) {
+      view.dispatch({
+        changes: { from: line.from, to: line.to, insert: newText },
+      })
+    }
+  }, [])
 
   // Save changes
   const handleSave = useCallback(async () => {
@@ -261,72 +536,33 @@ export default function SectionEditor() {
     }
   }, [id, content, isDirty, updateRawText])
 
-  // Keyboard shortcuts
+  // Revert to last saved version (undo last save)
+  const handleRevert = useCallback(async () => {
+    if (!window.confirm('Revert to the previous saved version? This cannot be undone.')) return
+
+    setSaveStatus('saving')
+    try {
+      const result = await revertRawText.mutateAsync(id)
+      // Refetch to get restored content
+      const refreshed = await refetch()
+      if (refreshed.data?.content) {
+        setContent(refreshed.data.content)
+        setIsDirty(false)
+      }
+      setSaveStatus('saved')
+      setTimeout(() => setSaveStatus(null), 2000)
+    } catch (err) {
+      console.error('Revert failed:', err)
+      setSaveStatus('error')
+    }
+  }, [id, revertRawText, refetch])
+
+  // Keyboard shortcuts (Ctrl+1-6 handled by CM6 keymap extension)
   useEffect(() => {
     const handleKeyDown = (e) => {
-      // Ctrl+S to save
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault()
         handleSave()
-        return
-      }
-
-      // Ctrl+1-6 to set heading level on current line
-      if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '6') {
-        e.preventDefault()
-        const level = parseInt(e.key)
-
-        if (!textareaRef.current) return
-
-        const textarea = textareaRef.current
-        const cursorPos = textarea.selectionStart
-        const lines = content.split('\n')
-
-        // Find which line the cursor is on
-        let charCount = 0
-        let lineIndex = 0
-        for (let i = 0; i < lines.length; i++) {
-          if (charCount + lines[i].length >= cursorPos) {
-            lineIndex = i
-            break
-          }
-          charCount += lines[i].length + 1
-        }
-
-        const line = lines[lineIndex]
-        const trimmed = line.trim()
-
-        // Determine what kind of fix to apply
-        let newContent
-        if (trimmed.startsWith('[SECTION]')) {
-          // Already a section - update the level
-          if (trimmed.match(/\[SECTION\]\s*#{1,6}/)) {
-            // Has a level - replace it
-            lines[lineIndex] = line.replace(
-              /\[SECTION\]\s*#{1,6}\s*/,
-              `[SECTION] ${'#'.repeat(level)} `
-            )
-          } else {
-            // Missing level - add it
-            lines[lineIndex] = line.replace(
-              /\[SECTION\]\s*/,
-              `[SECTION] ${'#'.repeat(level)} `
-            )
-          }
-          newContent = lines.join('\n')
-        } else if (trimmed && !trimmed.startsWith('[')) {
-          // Regular text - convert to section
-          const indent = line.match(/^\s*/)[0]
-          lines[lineIndex] = `${indent}[SECTION] ${'#'.repeat(level)} ${trimmed}`
-          newContent = lines.join('\n')
-        }
-
-        if (newContent) {
-          setContent(newContent)
-          setIsDirty(true)
-          setSaveStatus(null)
-        }
-        return
       }
     }
     document.addEventListener('keydown', handleKeyDown)
@@ -418,6 +654,16 @@ export default function SectionEditor() {
             <span className="text-xs text-red-400">Save failed</span>
           )}
 
+          {/* Revert button */}
+          <button
+            onClick={handleRevert}
+            disabled={saveStatus === 'saving'}
+            className="px-3 py-1.5 rounded-md text-sm font-medium bg-raised text-secondary hover:text-primary hover:bg-elevated border border-elevated transition-all"
+            title="Revert to previous saved version"
+          >
+            Revert
+          </button>
+
           {/* Save button */}
           <button
             onClick={handleSave}
@@ -447,7 +693,18 @@ export default function SectionEditor() {
           style={{ width: `${leftPanelWidth}%` }}
         >
           <div className="px-3 py-2 border-b border-subtle flex items-center justify-between">
-            <span className="label text-camel text-xs">Original PDF</span>
+            <div className="flex items-center gap-2">
+              <span className="label text-camel text-xs">Original PDF</span>
+              {currentPdfPage && (
+                <button
+                  onClick={syncPdfToPage}
+                  className="text-xs text-muted hover:text-camel transition-colors px-1.5 py-0.5 rounded bg-base hover:bg-raised border border-elevated"
+                  title="Sync PDF to editor cursor position"
+                >
+                  p.{currentPdfPage} ↗
+                </button>
+              )}
+            </div>
             {data?.original_path && (
               <button
                 onClick={async () => {
@@ -466,6 +723,7 @@ export default function SectionEditor() {
           <div className="flex-1 overflow-hidden">
             {pdfUrl ? (
               <iframe
+                ref={iframeRef}
                 src={pdfUrl}
                 className="w-full h-full border-0"
                 title="PDF Preview"
@@ -498,7 +756,8 @@ export default function SectionEditor() {
           <RawTextEditor
             content={content}
             onChange={handleContentChange}
-            textareaRef={textareaRef}
+            editorViewRef={editorViewRef}
+            onCursorActivity={handleCursorActivity}
           />
         </div>
 
@@ -533,6 +792,7 @@ export default function SectionEditor() {
             <SectionPreview
               sections={previewData?.sections || []}
               content={content}
+              onJumpTo={jumpToOffset}
             />
           </div>
         </div>
@@ -543,49 +803,52 @@ export default function SectionEditor() {
 
 
 /**
- * Raw Text Editor with syntax highlighting for [SECTION] markers
+ * Raw Text Editor — CodeMirror 6
+ *
+ * Replaces the previous textarea+pre overlay with CM6 for:
+ * - Reliable scroll-to-offset (via dispatch + scrollIntoView)
+ * - Virtual rendering (only visible lines in DOM)
+ * - Native syntax highlighting via decorations
+ * - Built-in undo/redo history
  */
-function RawTextEditor({ content, onChange, textareaRef }) {
-  const highlightRef = useRef(null)
+function RawTextEditor({ content, onChange, editorViewRef, onCursorActivity }) {
+  const extensions = useMemo(() => [
+    markerHighlighter,
+    headingKeymapExtension(),
+    EditorView.lineWrapping,
+    EditorView.contentAttributes.of({ spellcheck: 'false' }),
+  ], [])
 
-  // Sync scroll between textarea and highlight overlay
-  const handleScroll = useCallback(() => {
-    if (highlightRef.current && textareaRef.current) {
-      highlightRef.current.scrollTop = textareaRef.current.scrollTop
-      highlightRef.current.scrollLeft = textareaRef.current.scrollLeft
+  const handleUpdate = useCallback((viewUpdate) => {
+    if (viewUpdate.selectionSet && onCursorActivity) {
+      const pos = viewUpdate.state.selection.main.head
+      onCursorActivity(pos)
     }
-  }, [])
-
-  // Generate highlighted content
-  const highlightedContent = useMemo(() => {
-    return highlightSyntax(content)
-  }, [content])
+  }, [onCursorActivity])
 
   return (
-    <div className="flex-1 relative overflow-hidden">
-      {/* Syntax highlight overlay (behind textarea) */}
-      <pre
-        ref={highlightRef}
-        className="absolute inset-0 m-0 p-4 overflow-auto pointer-events-none font-mono text-sm leading-relaxed whitespace-pre-wrap break-words"
-        style={{
-          color: 'transparent',
-          background: 'var(--bg-base)',
-        }}
-        dangerouslySetInnerHTML={{ __html: highlightedContent }}
-      />
-
-      {/* Editable textarea (transparent text, visible caret) */}
-      <textarea
-        ref={textareaRef}
+    <div className="flex-1 overflow-hidden">
+      <CodeMirror
         value={content}
         onChange={onChange}
-        onScroll={handleScroll}
-        className="absolute inset-0 w-full h-full p-4 font-mono text-sm leading-relaxed resize-none border-0 outline-none bg-transparent"
-        style={{
-          color: '#a8a8a8',
-          caretColor: '#d4a574',
+        theme={scholiaEditorTheme}
+        extensions={extensions}
+        basicSetup={{
+          lineNumbers: true,
+          highlightActiveLineGutter: true,
+          highlightActiveLine: true,
+          foldGutter: false,
+          bracketMatching: false,
+          closeBrackets: false,
+          autocompletion: false,
+          highlightSelectionMatches: true,
+          indentOnInput: false,
         }}
-        spellCheck={false}
+        onCreateEditor={(view) => {
+          if (editorViewRef) editorViewRef.current = view
+        }}
+        onUpdate={handleUpdate}
+        style={{ height: '100%' }}
       />
     </div>
   )
@@ -593,73 +856,9 @@ function RawTextEditor({ content, onChange, textareaRef }) {
 
 
 /**
- * Syntax highlighting for extracted text format
- */
-function highlightSyntax(text) {
-  if (!text) return ''
-
-  // Escape HTML
-  let html = text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-
-  // Highlight [SECTION] markers with proper formatting (green)
-  html = html.replace(
-    /(\[SECTION\])\s*(#{1,6})\s*([^\n]+)/g,
-    '<span style="color: #4ade80;">$1</span> <span style="color: #60a5fa;">$2</span> <span style="color: #fafafa; font-weight: 500;">$3</span>'
-  )
-
-  // Highlight [SECTION] markers WITHOUT # (warning - orange)
-  html = html.replace(
-    /(\[SECTION\])(?!\s*#)(\s*)([^\n]*)/g,
-    '<span style="color: #fb923c; background: rgba(251, 146, 60, 0.1);">$1</span>$2<span style="color: #fb923c;">$3</span>'
-  )
-
-  // Highlight [PAGE] markers (muted) - supports both old and new format
-  html = html.replace(
-    /(\[PAGE\s+(?:pdf=\d+\s+doc=[^\]]*|\d+)\])/g,
-    '<span style="color: #585858;">$1</span>'
-  )
-
-  // Highlight [FIGURE] markers (purple)
-  html = html.replace(
-    /(\[FIGURE\])/g,
-    '<span style="color: #a78bfa;">$1</span>'
-  )
-
-  // Highlight [TABLE] markers (purple)
-  html = html.replace(
-    /(\[TABLE\])/g,
-    '<span style="color: #a78bfa;">$1</span>'
-  )
-
-  // Highlight [CAPTION] markers (purple)
-  html = html.replace(
-    /(\[CAPTION\])/g,
-    '<span style="color: #a78bfa;">$1</span>'
-  )
-
-  // Highlight [TITLE] markers (yellow)
-  html = html.replace(
-    /(\[TITLE\])/g,
-    '<span style="color: #facc15;">$1</span>'
-  )
-
-  // Highlight [FOOTNOTE] markers (muted purple)
-  html = html.replace(
-    /(\[FOOTNOTE\])/g,
-    '<span style="color: #8b5cf6;">$1</span>'
-  )
-
-  return html
-}
-
-
-/**
  * Section Preview - shows parsed section structure
  */
-function SectionPreview({ sections, content }) {
+function SectionPreview({ sections, content, onJumpTo }) {
   return (
     <div className="flex-1 overflow-auto p-4">
       {sections.length === 0 ? (
@@ -674,6 +873,7 @@ function SectionPreview({ sections, content }) {
               section={section}
               index={i}
               content={content}
+              onJumpTo={onJumpTo}
             />
           ))}
         </div>
@@ -701,7 +901,7 @@ function SectionPreview({ sections, content }) {
 /**
  * Individual section preview item
  */
-function SectionPreviewItem({ section, index, content }) {
+function SectionPreviewItem({ section, index, content, onJumpTo }) {
   // Extract a snippet of text after the section header
   const snippetLength = 100
   const startPos = section.start_offset || 0
@@ -715,10 +915,12 @@ function SectionPreviewItem({ section, index, content }) {
   return (
     <div
       className={`
-        p-2 rounded border transition-colors
+        p-2 rounded border transition-colors cursor-pointer
+        hover:border-camel/50 hover:bg-surface
         ${section.level === 1 ? 'bg-raised border-camel/30' : 'bg-base border-elevated'}
       `}
       style={{ marginLeft: `${(section.level - 1) * 12}px` }}
+      onClick={() => onJumpTo?.(startPos)}
     >
       <div className="flex items-center gap-2">
         <span className="text-xs text-muted font-mono">

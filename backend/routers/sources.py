@@ -309,7 +309,28 @@ async def list_sources(
                 "content": content,
             })
 
-        # Attach tags and authors to sources
+        # Fetch editors (linked person gluons)
+        editor_cursor = await db.execute(f"""
+            SELECT sgl.source_id, sgl.gluon_id, g.content, sgl.position
+            FROM source_gluon_links sgl
+            JOIN gluons g ON sgl.gluon_id = g.id
+            WHERE sgl.relationship_type = 'editor'
+            AND sgl.source_id IN ({placeholders})
+            ORDER BY sgl.source_id, sgl.position
+        """, source_ids)
+        editor_rows = await editor_cursor.fetchall()
+
+        # Group editors by source_id
+        editors_by_source = {}
+        for source_id, gluon_id, content, position in editor_rows:
+            if source_id not in editors_by_source:
+                editors_by_source[source_id] = []
+            editors_by_source[source_id].append({
+                "id": gluon_id,
+                "content": content,
+            })
+
+        # Attach tags, authors, and editors to sources
         for source in sources:
             source["tags"] = tags_by_source.get(source["id"], [])
             # Legacy: keep keywords array for backward compatibility, mirrors tags
@@ -319,6 +340,8 @@ async def list_sources(
             source["keyword_gluon_ids"] = json.dumps(tag_ids) if tag_ids else None
             # Include linked authors array
             source["authors"] = authors_by_source.get(source["id"], [])
+            # Include linked editors array (fallback when no authors)
+            source["editors"] = editors_by_source.get(source["id"], [])
 
     return sources
 
@@ -2315,10 +2338,14 @@ async def update_raw_text(source_id: str, update: RawTextUpdate):
 
     content_file = Path(content_path)
 
-    # Read old content before overwriting (needed for highlight relocation)
+    # Read old content before overwriting (needed for highlight relocation + backup)
     old_content = ""
     if content_file.exists():
         old_content = content_file.read_text(encoding="utf-8")
+
+    # Save backup before overwriting (enables undo/revert)
+    backup_file = content_file.with_suffix(content_file.suffix + ".bak")
+    backup_file.write_text(old_content, encoding="utf-8")
 
     # Write the new content
     content_file.write_text(update.content, encoding="utf-8")
@@ -2384,6 +2411,88 @@ async def preview_sections(source_id: str, update: RawTextUpdate):
         "sections_count": len(sections),
         "sections": sections,
         "char_count": len(update.content)
+    }
+
+
+@router.post("/{source_id}/raw/revert")
+async def revert_raw_text(source_id: str):
+    """
+    Revert the last save by restoring from backup (.bak) file.
+    Re-parses sections and relocates highlights back to the old content.
+    """
+    db = await get_db()
+
+    cursor = await db.execute(
+        "SELECT id, title, author_display, content_path FROM sources WHERE id = ?",
+        [source_id]
+    )
+    row = await cursor.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    src_id, title, author_display, content_path = row
+
+    if not content_path:
+        raise HTTPException(status_code=400, detail="No content file for this source")
+
+    content_file = Path(content_path)
+    backup_file = content_file.with_suffix(content_file.suffix + ".bak")
+
+    if not backup_file.exists():
+        raise HTTPException(status_code=404, detail="No backup found to revert to")
+
+    # Read current and backup content
+    current_content = content_file.read_text(encoding="utf-8") if content_file.exists() else ""
+    backup_content = backup_file.read_text(encoding="utf-8")
+
+    # Restore backup as the active content
+    content_file.write_text(backup_content, encoding="utf-8")
+
+    # Remove backup file (single-level undo)
+    backup_file.unlink()
+
+    # Re-parse sections from restored content
+    new_sections = _parse_sections(backup_content, src_id)
+
+    await db.execute("DELETE FROM sections WHERE source_id = ?", [src_id])
+    for i, section in enumerate(new_sections):
+        section_id = f"{src_id}-s{i}"
+        await db.execute("""
+            INSERT INTO sections (id, source_id, title, level, start_offset,
+                                  end_offset, order_index, parent_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, [
+            section_id, src_id, section["title"], section["level"],
+            section["start_offset"], section["end_offset"], i, None
+        ])
+
+    # Relocate highlights back to the restored content
+    highlight_stats = await _relocate_highlights(
+        db, src_id, current_content, backup_content, new_sections
+    )
+
+    # Update FTS
+    await db.execute("""
+        DELETE FROM sources_fts WHERE rowid = (SELECT rowid FROM sources WHERE id = ?)
+    """, [src_id])
+    await db.execute("""
+        INSERT INTO sources_fts (rowid, title, author_display)
+        SELECT rowid, title, author_display FROM sources WHERE id = ?
+    """, [src_id])
+
+    now = datetime.now().isoformat()
+    await db.execute("UPDATE sources SET updated_at = ? WHERE id = ?", [now, src_id])
+
+    await db.commit()
+
+    return {
+        "source_id": src_id,
+        "sections_count": len(new_sections),
+        "sections": new_sections,
+        "char_count": len(backup_content),
+        "updated_at": now,
+        "highlights_relocated": highlight_stats,
     }
 
 

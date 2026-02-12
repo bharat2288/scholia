@@ -663,7 +663,7 @@ class RLMAgent:
     def __init__(
         self,
         session_id: str,
-        model_id: str = "claude-sonnet",
+        model_id: str = "claude-opus",
         max_iterations: int = 20,
         max_tokens: int = 4096,
         verbose: bool = True
@@ -1031,7 +1031,7 @@ class RLMAgent:
 async def run_rlm_query(
     session_id: str,
     query: str,
-    model_id: str = "claude-sonnet",
+    model_id: str = "claude-opus",
     conversation_history: list[dict] = None,
     max_iterations: int = 20,
     max_tokens: int = 4096,
@@ -1069,7 +1069,7 @@ async def run_rlm_query(
 async def run_rlm_query_streaming(
     session_id: str,
     query: str,
-    model_id: str = "claude-sonnet",
+    model_id: str = "claude-opus",
     conversation_history: list[dict] = None,
     max_iterations: int = 20,
     max_tokens: int = 4096,

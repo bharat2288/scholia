@@ -645,9 +645,15 @@ function ChatsPanel({ searchQuery }) {
               onClick={() => navigate(`/read/${conv.source_id}?conversation=${conv.id}`)}
               className="group bg-surface border border-transparent rounded-lg p-4 hover:border-camel/40 hover:-translate-y-0.5 hover:shadow-[0_8px_20px_rgba(212,165,116,0.08)] transition-all duration-200 shadow-lg cursor-pointer"
             >
-              {/* Source info */}
+              {/* Source info — clicking this opens the source document */}
               {conv.source_title && (
-                <div className="flex items-center gap-1 text-xs text-camel/70 mb-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    navigate(`/read/${conv.source_id}`)
+                  }}
+                  className="flex items-center gap-1 text-xs text-camel/70 hover:text-camel mb-2 transition-colors"
+                >
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
@@ -655,7 +661,7 @@ function ChatsPanel({ searchQuery }) {
                   {conv.source_author && (
                     <span className="text-muted"> — {conv.source_author}</span>
                   )}
-                </div>
+                </button>
               )}
 
               {/* Preview */}

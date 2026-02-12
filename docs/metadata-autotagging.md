@@ -83,7 +83,7 @@ The AI returns structured metadata with confidence scores:
   "title": {"value": "Supersizing the Mind", "confidence": 0.95},
   "authors": {"value": ["Clark, Andy"], "confidence": 0.92},
   "year": {"value": "2008", "confidence": 0.88},
-  "keywords": {
+  "tags": {
     "value": ["extended mind", "distributed cognition", "embodied cognition", "cognitive science"],
     "confidence": 0.85
   },
@@ -93,7 +93,7 @@ The AI returns structured metadata with confidence scores:
 
 **Confidence thresholds**: Only fields with confidence ≥ 0.7 are shown. DOI and ISBN require ≥ 0.9 (false positives are worse than missing values for identifiers).
 
-### Keyword Inference
+### Tag Inference
 
 The most valuable part of AI suggestion isn't extracting what's explicitly stated — it's **inferring topics**. A paper might never use the phrase "distributed cognition" in its abstract, but the AI can infer it from the content. The prompt explicitly instructs: "Suggest inferred topics even if not explicitly stated in the document."
 
@@ -128,17 +128,23 @@ At $0.001 per source, processing 200 papers costs $0.20. That's a reasonable pri
 
 ---
 
-## How Tags Become Gluons
+## How Metadata Becomes Knowledge Graph
 
-When the AI suggests keywords and the user accepts them, the frontend calls `/tags/batch` with the list of tag names. For each tag:
+Tags and authors don't just sit in a metadata field — they become **gluons** (see [Gluons: The Knowledge Graph](gluons.md)), first-class objects in the knowledge graph with their own pages, backlinks, and connections.
+
+### Tags as Gluons
+
+When the AI suggests tags and the user accepts them, the frontend calls `/tags/batch` with the list of tag names. For each tag:
 
 1. Normalize (lowercase, no spaces)
 2. Get-or-create tag gluon
 3. Create source → tag link
 
-If the AI suggests "distributed cognition" for three different papers, all three get linked to the *same* tag gluon. The knowledge graph emerges from metadata — you get cross-document connections for free.
+If the AI suggests "distributed cognition" for three different papers, all three get linked to the *same* tag gluon. Open that tag's page and you see every source tagged with it. The knowledge graph emerges from metadata — you get cross-document connections for free.
 
-Similarly, when the AI identifies authors, `/people/batch` creates or retrieves person gluons and links them to the source. Author pages accumulate: "Andy Clark" links to every Clark paper in your library.
+### Authors as Gluons
+
+Similarly, when the AI identifies authors, `/people/batch` creates or retrieves **person gluons** and links them to the source. Each author becomes a node in the knowledge graph. "Andy Clark" accumulates links to every Clark paper in your library — an author page built automatically from metadata, not manual curation.
 
 ---
 

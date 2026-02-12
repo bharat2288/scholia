@@ -232,7 +232,7 @@ export function useRLMStream() {
   const startStream = useCallback(({
     sessionId,
     query,
-    modelId = 'claude-sonnet',
+    modelId = 'claude-opus',
     maxIterations = 20,
     maxTokens = 8192
   }) => {

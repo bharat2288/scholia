@@ -622,7 +622,7 @@ async def get_session_messages(
 class RLMChatRequest(BaseModel):
     """Request for RLM-powered research query."""
     query: str
-    model_id: str = "claude-sonnet"
+    model_id: str = "claude-opus"
     conversation_history: Optional[List[ChatMessage]] = None
     max_iterations: int = 20
     max_tokens: int = 12288  # Higher default for research responses
@@ -758,7 +758,7 @@ async def session_rlm_chat(session_id: str, request: RLMChatRequest):
 async def session_rlm_stream(
     session_id: str,
     query: str,
-    model_id: str = "claude-sonnet",
+    model_id: str = "claude-opus",
     max_iterations: int = 20,
     max_tokens: int = 12288
 ):
