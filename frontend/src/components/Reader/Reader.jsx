@@ -188,6 +188,7 @@ export default function Reader() {
   const [positionRestored, setPositionRestored] = useState(false)
   const [isChatExpanded, setIsChatExpanded] = useState(false)
   const saveTimeoutRef = useRef(null)
+  const scrollSpyRef = useRef(false) // true when scroll spy triggered the section change
 
   // Resizable pane widths
   const { tocWidth, sidebarWidth, handleTocResize, handleSidebarResize, isResizing } = useResizable()
@@ -247,8 +248,12 @@ export default function Reader() {
     }
   }, [id])
 
-  // Scroll to section when selected (but not on initial position restore)
+  // Scroll to section when selected via ToC click (skip scroll-spy and initial restore)
   useEffect(() => {
+    if (scrollSpyRef.current) {
+      scrollSpyRef.current = false
+      return
+    }
     if (currentSectionId && positionRestored) {
       const element = document.getElementById(`section-${currentSectionId}`)
       if (element) {
@@ -290,6 +295,45 @@ export default function Reader() {
       }
     }
   }, [positionRestored, id, currentSectionId, updateReadingPosition])
+
+  // Scroll spy: update active ToC section as user reads
+  useEffect(() => {
+    if (!positionRestored || !contentRef.current || !data?.sections?.length) return
+
+    const container = contentRef.current
+    let ticking = false
+
+    const updateActiveSection = () => {
+      ticking = false
+      const containerRect = container.getBoundingClientRect()
+      const offset = 120 // pixels from top — section header considered "active" once past this line
+
+      let activeId = null
+      for (const section of data.sections) {
+        const el = document.getElementById(`section-${section.id}`)
+        if (!el) continue
+        const top = el.getBoundingClientRect().top - containerRect.top
+        if (top <= offset) {
+          activeId = section.id
+        }
+      }
+
+      if (activeId && activeId !== useReaderStore.getState().currentSectionId) {
+        scrollSpyRef.current = true
+        setCurrentSection(activeId)
+      }
+    }
+
+    const handleScrollSpy = () => {
+      if (!ticking) {
+        requestAnimationFrame(updateActiveSection)
+        ticking = true
+      }
+    }
+
+    container.addEventListener('scroll', handleScrollSpy, { passive: true })
+    return () => container.removeEventListener('scroll', handleScrollSpy)
+  }, [positionRestored, data?.sections, setCurrentSection])
 
   /**
    * Handle text selection - extract OFFSETS from data attributes
@@ -2010,6 +2054,15 @@ function InfoPanel({ documentData, sourceId, copyAllText, copiedAll, onEditMetad
  * Table of Contents Pane
  */
 function TocPane({ sections, currentSectionId, onSectionClick }) {
+  const activeRef = useRef(null)
+
+  // Auto-scroll ToC to keep active section visible
+  useEffect(() => {
+    if (activeRef.current) {
+      activeRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [currentSectionId])
+
   return (
     <aside className="h-full w-full bg-surface border-r border-subtle overflow-auto">
       <div className="p-4">
@@ -2021,6 +2074,7 @@ function TocPane({ sections, currentSectionId, onSectionClick }) {
             {sections.map((section) => (
               <button
                 key={section.id}
+                ref={section.id === currentSectionId ? activeRef : null}
                 onClick={() => onSectionClick(section.id)}
                 className={`
                   w-full text-left px-3 py-2 rounded-md text-sm transition-colors
