@@ -2084,6 +2084,8 @@ function YouTubePlayer({ videoId, title }) {
 
       playerRef.current = new window.YT.Player(containerRef.current, {
         videoId: videoId,
+        width: '100%',
+        height: '100%',
         playerVars: {
           autoplay: 0,
           modestbranding: 1,
@@ -2718,7 +2720,7 @@ function OffsetText({ text, baseOffset, highlights }) {
   if (relevantHighlights.length === 0) {
     return (
       <span data-offset={baseOffset}>
-        <FormattedSpan text={text} />
+        <FormattedSpan text={text} baseOffset={baseOffset} />
       </span>
     )
   }
@@ -2738,7 +2740,7 @@ function OffsetText({ text, baseOffset, highlights }) {
     if (hlStart > currentPos) {
       parts.push(
         <span key={`pre-${h.id}`} data-offset={baseOffset + currentPos}>
-          <FormattedSpan text={text.slice(currentPos, hlStart)} />
+          <FormattedSpan text={text.slice(currentPos, hlStart)} baseOffset={baseOffset + currentPos} />
         </span>
       )
     }
@@ -2753,7 +2755,7 @@ function OffsetText({ text, baseOffset, highlights }) {
         className="rounded px-0.5 transition-all"
         style={{ backgroundColor: color.bg }}
       >
-        <FormattedSpan text={text.slice(hlStart, hlEnd)} />
+        <FormattedSpan text={text.slice(hlStart, hlEnd)} baseOffset={baseOffset + hlStart} />
       </mark>
     )
 
@@ -2764,7 +2766,7 @@ function OffsetText({ text, baseOffset, highlights }) {
   if (currentPos < text.length) {
     parts.push(
       <span key="post" data-offset={baseOffset + currentPos}>
-        <FormattedSpan text={text.slice(currentPos)} />
+        <FormattedSpan text={text.slice(currentPos)} baseOffset={baseOffset + currentPos} />
       </span>
     )
   }
@@ -2777,7 +2779,15 @@ function OffsetText({ text, baseOffset, highlights }) {
  * Simple text formatting (bold, italic, etc.)
  * Stripped down version that doesn't interfere with offset tracking
  */
-function FormattedSpan({ text }) {
+/**
+ * Render text with inline markdown/HTML formatting.
+ * When baseOffset is provided, each sub-element gets data-offset pointing to
+ * its position in the raw text. This is critical for accurate highlight offset
+ * calculation — without it, formatting markers (*, **, <sup>, etc.) that are
+ * consumed during rendering cause DOM character counts to diverge from raw
+ * text positions.
+ */
+function FormattedSpan({ text, baseOffset }) {
   if (!text) return null
 
   // Quick check if any formatting needed
@@ -2785,17 +2795,25 @@ function FormattedSpan({ text }) {
     return text
   }
 
-  // Process markdown and HTML formatting
+  // Process markdown and HTML formatting, tracking raw text position
   const parts = []
   let remaining = text
+  let rawOffset = 0 // position in raw text relative to start of `text`
   let key = 0
+  const track = baseOffset !== undefined
 
   while (remaining.length > 0) {
     // Bold **text**
     const boldMatch = remaining.match(/^(.*?)\*\*(.+?)\*\*/)
     if (boldMatch) {
-      if (boldMatch[1]) parts.push(<span key={key++}>{boldMatch[1]}</span>)
-      parts.push(<strong key={key++} className="font-semibold text-primary">{boldMatch[2]}</strong>)
+      if (boldMatch[1]) {
+        parts.push(<span key={key++} {...(track && { 'data-offset': baseOffset + rawOffset })}>{boldMatch[1]}</span>)
+        rawOffset += boldMatch[1].length
+      }
+      rawOffset += 2 // skip opening **
+      parts.push(<strong key={key++} {...(track && { 'data-offset': baseOffset + rawOffset })} className="font-semibold text-primary">{boldMatch[2]}</strong>)
+      rawOffset += boldMatch[2].length
+      rawOffset += 2 // skip closing **
       remaining = remaining.slice(boldMatch[0].length)
       continue
     }
@@ -2803,8 +2821,14 @@ function FormattedSpan({ text }) {
     // Italic *text*
     const italicMatch = remaining.match(/^(.*?)\*([^*]+)\*/)
     if (italicMatch && !italicMatch[1].endsWith('*')) {
-      if (italicMatch[1]) parts.push(<span key={key++}>{italicMatch[1]}</span>)
-      parts.push(<em key={key++} className="italic">{italicMatch[2]}</em>)
+      if (italicMatch[1]) {
+        parts.push(<span key={key++} {...(track && { 'data-offset': baseOffset + rawOffset })}>{italicMatch[1]}</span>)
+        rawOffset += italicMatch[1].length
+      }
+      rawOffset += 1 // skip opening *
+      parts.push(<em key={key++} {...(track && { 'data-offset': baseOffset + rawOffset })} className="italic">{italicMatch[2]}</em>)
+      rawOffset += italicMatch[2].length
+      rawOffset += 1 // skip closing *
       remaining = remaining.slice(italicMatch[0].length)
       continue
     }
@@ -2812,8 +2836,14 @@ function FormattedSpan({ text }) {
     // Superscript <sup>
     const supMatch = remaining.match(/^(.*?)<sup>(.*?)<\/sup>/s)
     if (supMatch) {
-      if (supMatch[1]) parts.push(<span key={key++}>{supMatch[1]}</span>)
-      parts.push(<sup key={key++} className="text-xs">{supMatch[2]}</sup>)
+      if (supMatch[1]) {
+        parts.push(<span key={key++} {...(track && { 'data-offset': baseOffset + rawOffset })}>{supMatch[1]}</span>)
+        rawOffset += supMatch[1].length
+      }
+      rawOffset += 5 // skip <sup>
+      parts.push(<sup key={key++} {...(track && { 'data-offset': baseOffset + rawOffset })} className="text-xs">{supMatch[2]}</sup>)
+      rawOffset += supMatch[2].length
+      rawOffset += 6 // skip </sup>
       remaining = remaining.slice(supMatch[0].length)
       continue
     }
@@ -2821,8 +2851,14 @@ function FormattedSpan({ text }) {
     // Subscript <sub>
     const subMatch = remaining.match(/^(.*?)<sub>(.*?)<\/sub>/s)
     if (subMatch) {
-      if (subMatch[1]) parts.push(<span key={key++}>{subMatch[1]}</span>)
-      parts.push(<sub key={key++} className="text-xs">{subMatch[2]}</sub>)
+      if (subMatch[1]) {
+        parts.push(<span key={key++} {...(track && { 'data-offset': baseOffset + rawOffset })}>{subMatch[1]}</span>)
+        rawOffset += subMatch[1].length
+      }
+      rawOffset += 5 // skip <sub>
+      parts.push(<sub key={key++} {...(track && { 'data-offset': baseOffset + rawOffset })} className="text-xs">{subMatch[2]}</sub>)
+      rawOffset += subMatch[2].length
+      rawOffset += 6 // skip </sub>
       remaining = remaining.slice(subMatch[0].length)
       continue
     }
@@ -2830,8 +2866,14 @@ function FormattedSpan({ text }) {
     // Inline math $...$
     const mathMatch = remaining.match(/^(.*?)\$([^$]+)\$/)
     if (mathMatch && !mathMatch[1].endsWith('$')) {
-      if (mathMatch[1]) parts.push(<span key={key++}>{mathMatch[1]}</span>)
-      parts.push(<code key={key++} className="font-mono text-sm bg-raised/30 px-1 rounded">{mathMatch[2]}</code>)
+      if (mathMatch[1]) {
+        parts.push(<span key={key++} {...(track && { 'data-offset': baseOffset + rawOffset })}>{mathMatch[1]}</span>)
+        rawOffset += mathMatch[1].length
+      }
+      rawOffset += 1 // skip opening $
+      parts.push(<code key={key++} {...(track && { 'data-offset': baseOffset + rawOffset })} className="font-mono text-sm bg-raised/30 px-1 rounded">{mathMatch[2]}</code>)
+      rawOffset += mathMatch[2].length
+      rawOffset += 1 // skip closing $
       remaining = remaining.slice(mathMatch[0].length)
       continue
     }
@@ -2839,8 +2881,14 @@ function FormattedSpan({ text }) {
     // Inline code `text`
     const codeMatch = remaining.match(/^(.*?)`([^`]+)`/)
     if (codeMatch) {
-      if (codeMatch[1]) parts.push(<span key={key++}>{codeMatch[1]}</span>)
-      parts.push(<code key={key++} className="font-mono text-sm bg-raised/50 px-1.5 py-0.5 rounded text-camel/90">{codeMatch[2]}</code>)
+      if (codeMatch[1]) {
+        parts.push(<span key={key++} {...(track && { 'data-offset': baseOffset + rawOffset })}>{codeMatch[1]}</span>)
+        rawOffset += codeMatch[1].length
+      }
+      rawOffset += 1 // skip opening `
+      parts.push(<code key={key++} {...(track && { 'data-offset': baseOffset + rawOffset })} className="font-mono text-sm bg-raised/50 px-1.5 py-0.5 rounded text-camel/90">{codeMatch[2]}</code>)
+      rawOffset += codeMatch[2].length
+      rawOffset += 1 // skip closing `
       remaining = remaining.slice(codeMatch[0].length)
       continue
     }
@@ -2848,9 +2896,14 @@ function FormattedSpan({ text }) {
     // Markdown links [text](url)
     const linkMatch = remaining.match(/^(.*?)\[([^\]]+)\]\(([^)]+)\)/)
     if (linkMatch) {
-      if (linkMatch[1]) parts.push(<span key={key++}>{linkMatch[1]}</span>)
+      if (linkMatch[1]) {
+        parts.push(<span key={key++} {...(track && { 'data-offset': baseOffset + rawOffset })}>{linkMatch[1]}</span>)
+        rawOffset += linkMatch[1].length
+      }
+      rawOffset += 1 // skip [
       const linkText = linkMatch[2]
       const linkUrl = linkMatch[3]
+      const linkOffset = track ? baseOffset + rawOffset : undefined
 
       // Categorize link types
       const isExternal = linkUrl.startsWith('http://') || linkUrl.startsWith('https://') || linkUrl.startsWith('mailto:')
@@ -2858,7 +2911,6 @@ function FormattedSpan({ text }) {
       const isRelative = !isExternal && !isAnchor
 
       if (isExternal) {
-        // External links open in new tab
         parts.push(
           <a
             key={key++}
@@ -2866,12 +2918,12 @@ function FormattedSpan({ text }) {
             target="_blank"
             rel="noopener noreferrer"
             className="text-camel hover:text-camel/80 underline underline-offset-2 decoration-camel/40 hover:decoration-camel/70 transition-colors"
+            {...(linkOffset !== undefined && { 'data-offset': linkOffset })}
           >
             {linkText}
           </a>
         )
       } else if (isAnchor) {
-        // Internal anchor links - scroll to matching section
         parts.push(
           <a
             key={key++}
@@ -2881,28 +2933,33 @@ function FormattedSpan({ text }) {
               scrollToAnchor(linkUrl)
             }}
             className="text-camel hover:text-camel/80 underline underline-offset-2 decoration-camel/40 hover:decoration-camel/70 transition-colors cursor-pointer"
+            {...(linkOffset !== undefined && { 'data-offset': linkOffset })}
           >
             {linkText}
           </a>
         )
       } else if (isRelative) {
-        // Relative links (./page.html) - render as styled text, can't resolve
         parts.push(
           <span
             key={key++}
             className="text-camel/60 cursor-default"
             title={`Link to: ${linkUrl} (external document)`}
+            {...(linkOffset !== undefined && { 'data-offset': linkOffset })}
           >
             {linkText}
           </span>
         )
       }
+      rawOffset += linkText.length
+      rawOffset += 2 // skip ](
+      rawOffset += linkUrl.length
+      rawOffset += 1 // skip )
       remaining = remaining.slice(linkMatch[0].length)
       continue
     }
 
-    // No more patterns
-    parts.push(<span key={key++}>{remaining}</span>)
+    // No more patterns — render remaining plain text
+    parts.push(<span key={key++} {...(track && { 'data-offset': baseOffset + rawOffset })}>{remaining}</span>)
     break
   }
 
