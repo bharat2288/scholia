@@ -595,11 +595,27 @@ def process_pdf_sync(temp_id: str, tier: str, pdf_path: Path):
             pdf_dest = doc_folder / f"{folder_name}.pdf"
             if not pdf_dest.exists():
                 shutil.copy2(pdf_path, pdf_dest)
+        else:
+            # dots-ocr: rebuild extracted text from JSON files (more precise than
+            # the markdown-based dots_ocr_to_scholia used during extraction).
+            # Uses structured category data for accurate [SECTION]/[FIGURE]/etc markers.
+            from services.rebuild_extracted import rebuild_extracted
+            content = rebuild_extracted(doc_folder, method='dots-ocr')
 
         # Write extracted text
         output_path = method_folder / f"{folder_name}--{tier}--extracted.txt"
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(content)
+
+        # Pre-crop figures from PDF for faster serving (dots-ocr only —
+        # page JSONs contain bbox coordinates for Picture elements)
+        if tier == "dots-ocr":
+            from services.rebuild_extracted import crop_figures
+            try:
+                fig_count = crop_figures(doc_folder, method='dots-ocr')
+                print(f"[processor] Pre-cropped {fig_count} figures")
+            except Exception as e:
+                print(f"[processor] Warning: figure cropping failed: {e}")
 
         # Update progress: complete
         progress_store[temp_id] = {
