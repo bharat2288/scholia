@@ -30,6 +30,7 @@ import json
 from database import get_db
 from services.chat import ChatService, get_chat_models
 from services.rlm_agent import RLMAgent, run_rlm_query, run_rlm_query_streaming
+from services.rlm_v2_engine import run_rlm_v2_streaming
 
 router = APIRouter()
 
@@ -857,6 +858,159 @@ async def session_rlm_stream(
                 model_id,
                 json.dumps(final_usage) if final_usage else None,
                 json.dumps(rlm_metadata),
+                now
+            ])
+
+            # Update session timestamp
+            await db.execute(
+                "UPDATE research_sessions SET updated_at = ? WHERE id = ?",
+                [now, session_id]
+            )
+            await db.commit()
+
+            # Send saved event with message ID
+            yield f"event: saved\n"
+            yield f"data: {json.dumps({'message_id': message_id})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+# ============================================================
+# RLM-v2 (Code Execution) Endpoint
+# ============================================================
+
+@router.get("/{session_id}/rlm-v2/stream")
+async def session_rlm_v2_stream(
+    session_id: str,
+    query: str,
+    orchestrator_model: str = "claude-sonnet",
+    sub_model: str = "claude-haiku",
+    synthesis_model: str = "claude-opus",
+    max_iterations: int = 20,
+    max_tokens: int = 4096
+):
+    """
+    Stream an RLM-v2 query using the code-execution engine.
+
+    Three-tier architecture:
+    - Orchestrator (Sonnet): writes Python code to explore documents — fast
+    - Sub-LLM (Haiku): independent semantic reasoning on passages — cheap
+    - Synthesis (Opus): polished final answer from collected findings — quality
+
+    Returns SSE events:
+    - start: {query} - Query begins
+    - thinking: {iteration} - New iteration starting
+    - code_block: {code, iteration} - Code being executed
+    - exec_result: {stdout, stderr, duration_ms} - Execution output
+    - sub_llm_done: {count, duration_ms} - Sub-LLM calls completed
+    - synthesizing: {model} - Opus synthesis starting
+    - complete: {content, iterations, sub_llm_calls, usage} - Final answer
+    - error: {error} - Failure
+    - saved: {message_id} - Message persisted to database
+    """
+    async def event_generator():
+        db = await get_db()
+
+        # Check session exists
+        cursor = await db.execute(
+            "SELECT id FROM research_sessions WHERE id = ?",
+            [session_id]
+        )
+        if not await cursor.fetchone():
+            yield f"event: error\n"
+            yield f"data: {json.dumps({'error': 'Session not found'})}\n\n"
+            return
+
+        # Validate orchestrator model
+        models = {m["id"]: m for m in get_chat_models()}
+        if orchestrator_model not in models:
+            yield f"event: error\n"
+            yield f"data: {json.dumps({'error': f'Unknown model: {orchestrator_model}'})}\n\n"
+            return
+
+        if not models[orchestrator_model]["available"]:
+            yield f"event: error\n"
+            yield f"data: {json.dumps({'error': f'Model {orchestrator_model} not available'})}\n\n"
+            return
+
+        # Save user query
+        now = datetime.now().isoformat()
+        user_msg_id = str(uuid.uuid4())[:8]
+        await db.execute("""
+            INSERT INTO session_messages
+            (id, session_id, role, content, model_id, created_at)
+            VALUES (?, ?, 'user', ?, ?, ?)
+        """, [user_msg_id, session_id, query, orchestrator_model, now])
+        await db.commit()
+
+        # Stream RLM-v2 query
+        final_content = None
+        final_iterations = 0
+        final_sub_llm_calls = 0
+        final_usage = None
+        had_error = False
+
+        try:
+            async for event in run_rlm_v2_streaming(
+                session_id=session_id,
+                query=query,
+                orchestrator_model=orchestrator_model,
+                sub_model=sub_model,
+                synthesis_model=synthesis_model,
+                max_iterations=max_iterations,
+                max_tokens=max_tokens,
+                verbose=True
+            ):
+                # Forward the event as SSE
+                yield f"event: {event['event']}\n"
+                yield f"data: {json.dumps(event['data'], default=str)}\n\n"
+
+                # Capture final state from complete event
+                if event["event"] == "complete":
+                    final_content = event["data"].get("content")
+                    final_iterations = event["data"].get("iterations", 0)
+                    final_sub_llm_calls = event["data"].get("sub_llm_calls", 0)
+                    final_usage = event["data"].get("usage")
+                elif event["event"] == "error":
+                    had_error = True
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield f"event: error\n"
+            yield f"data: {json.dumps({'error': f'Stream crashed: {type(e).__name__}: {e}'})}\n\n"
+            had_error = True
+
+        # Save assistant response if successful
+        if final_content is not None and not had_error:
+            message_id = str(uuid.uuid4())[:8]
+            now = datetime.now().isoformat()
+            rlm_v2_metadata = {
+                "type": "rlm-v2",
+                "iterations": final_iterations,
+                "sub_llm_calls": final_sub_llm_calls,
+                "orchestrator_model": orchestrator_model,
+                "sub_model": sub_model,
+                "synthesis_model": synthesis_model,
+            }
+            await db.execute("""
+                INSERT INTO session_messages
+                (id, session_id, role, content, model_id, usage, context_snapshot, created_at)
+                VALUES (?, ?, 'assistant', ?, ?, ?, ?, ?)
+            """, [
+                message_id,
+                session_id,
+                final_content,
+                orchestrator_model,
+                json.dumps(final_usage) if final_usage else None,
+                json.dumps(rlm_v2_metadata),
                 now
             ])
 

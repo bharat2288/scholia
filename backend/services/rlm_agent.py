@@ -711,7 +711,7 @@ class RLMAgent:
 
         current_messages = messages.copy()
         total_tool_calls = 0
-        total_usage = {"input_tokens": 0, "output_tokens": 0}
+        total_usage = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
 
         for iteration in range(self.max_iterations):
             if self.verbose:
@@ -731,10 +731,12 @@ class RLMAgent:
                     "error": result.get("error", "Unknown error")
                 }
 
-            # Track usage
+            # Track usage (cost_usd is already calculated per-iteration
+            # by chat_with_tools with cache-aware pricing)
             if result.get("usage"):
                 total_usage["input_tokens"] += result["usage"].get("input_tokens", 0)
                 total_usage["output_tokens"] += result["usage"].get("output_tokens", 0)
+                total_usage["cost_usd"] += result["usage"].get("cost_usd", 0.0)
 
             # Check for tool use
             tool_uses = result.get("tool_uses", [])
@@ -837,7 +839,7 @@ class RLMAgent:
 
         current_messages = messages.copy()
         total_tool_calls = 0
-        total_usage = {"input_tokens": 0, "output_tokens": 0}
+        total_usage = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
 
         for iteration in range(self.max_iterations):
             yield {"event": "iteration_start", "data": {"iteration": iteration + 1}}
@@ -855,10 +857,12 @@ class RLMAgent:
                 }
                 return
 
-            # Track usage
+            # Track usage (cost_usd is already calculated per-iteration
+            # by chat_with_tools with cache-aware pricing)
             if result.get("usage"):
                 total_usage["input_tokens"] += result["usage"].get("input_tokens", 0)
                 total_usage["output_tokens"] += result["usage"].get("output_tokens", 0)
+                total_usage["cost_usd"] += result["usage"].get("cost_usd", 0.0)
 
             # Check for tool use
             tool_uses = result.get("tool_uses", [])
@@ -876,8 +880,9 @@ class RLMAgent:
             if not tool_uses:
                 # No tool calls - Claude is done
                 if self.verbose:
-                    print(f"[RLM Agent] Complete after {iteration + 1} iterations")
+                    print(f"[RLM Agent] Complete after {iteration + 1} iterations, cost: ${total_usage['cost_usd']:.4f}")
 
+                total_usage["cost_usd"] = round(total_usage["cost_usd"], 6)
                 yield {
                     "event": "complete",
                     "data": {

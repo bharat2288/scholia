@@ -7,6 +7,7 @@ Uses aiosqlite for async operations.
 Database file: ../data/library.db
 """
 
+import json
 import aiosqlite
 from pathlib import Path
 from typing import Optional
@@ -1209,6 +1210,54 @@ async def _create_schema():
             f"Migration complete: Reindexed highlights across {sources_processed} sources "
             f"({total_fixed} fixed, {total_correct} already correct, {total_failed} failed)"
         )
+
+    # Migration: Backfill cost_usd into existing RLM message usage data
+    cursor = await _db.execute(
+        "SELECT name FROM _migrations WHERE name = 'rlm_backfill_cost_usd'"
+    )
+    if not await cursor.fetchone():
+        from services.chat.config import CHAT_MODELS
+
+        print("Running migration: rlm_backfill_cost_usd...")
+        cursor = await _db.execute("""
+            SELECT id, model_id, usage FROM session_messages
+            WHERE context_snapshot LIKE '%"type": "rlm"%'
+            AND usage IS NOT NULL
+        """)
+        rows = await cursor.fetchall()
+        updated = 0
+        for msg_id, model_id, usage_json in rows:
+            try:
+                usage = json.loads(usage_json)
+                if "cost_usd" in usage:
+                    continue  # Already has cost
+
+                config = CHAT_MODELS.get(model_id)
+                if not config:
+                    continue
+
+                pricing = config.get("pricing", {"input": 0, "output": 0})
+                input_tokens = usage.get("input_tokens", 0)
+                output_tokens = usage.get("output_tokens", 0)
+
+                # Calculate cost (no cache breakdown available for historical data)
+                cost = (input_tokens / 1_000_000) * pricing["input"] + \
+                       (output_tokens / 1_000_000) * pricing["output"]
+                usage["cost_usd"] = round(cost, 6)
+
+                await _db.execute(
+                    "UPDATE session_messages SET usage = ? WHERE id = ?",
+                    [json.dumps(usage), msg_id]
+                )
+                updated += 1
+            except (json.JSONDecodeError, KeyError):
+                continue
+
+        await _db.execute(
+            "INSERT INTO _migrations (name) VALUES ('rlm_backfill_cost_usd')"
+        )
+        await _db.commit()
+        print(f"Migration complete: Backfilled cost for {updated} RLM messages")
 
     await _db.commit()
     print("Database schema created/verified")

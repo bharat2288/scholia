@@ -1,36 +1,44 @@
 import { useState, useRef, useEffect } from 'react'
 import { useSessionMessages, useRLMStream, useSaveSessionMessage } from '../../hooks/useRLM'
+import { useRLMV2Stream } from '../../hooks/useRLMV2'
 import useReaderStore from '../../stores/useReaderStore'
 import useResearchStore from '../../stores/useResearchStore'
 import ToolCallFeed from './ToolCallFeed'
+import CodeBlockFeed from './CodeBlockFeed'
 import { MarkdownContent } from '../../utils/markdown'
+import { formatCost } from '../../hooks/useChat'
 
 /**
  * RLMChat
  * =======
  * Chat interface with RLM streaming and tool call visibility.
+ * Supports two modes:
+ * - Tool Use (v1): Claude calls tools, results enter context
+ * - Code (v2): LLM writes Python, documents stay outside context
  */
 export default function RLMChat({ sessionId }) {
   const [input, setInput] = useState('')
   const inputRef = useRef(null)
   const messagesEndRef = useRef(null)
   const { data: messages = [], isLoading: messagesLoading } = useSessionMessages(sessionId)
-  const {
-    isStreaming,
-    toolCalls,
-    result,
-    error,
-    currentIteration,
-    startStream,
-    stopStream,
-    reset
-  } = useRLMStream()
   const saveMessage = useSaveSessionMessage()
+
+  // Both streaming hooks (only one active at a time)
+  const v1Stream = useRLMStream()
+  const v2Stream = useRLMV2Stream()
+
+  const { fontSize, setFontSize } = useReaderStore()
+  const { maxTokens, setMaxTokens, rlmMode, setRlmMode } = useResearchStore()
+
+  // Determine active stream based on mode
+  const isV2 = rlmMode === 'code'
+  const activeStream = isV2 ? v2Stream : v1Stream
+  const { isStreaming, result, error } = activeStream
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, toolCalls, result])
+  }, [messages, v1Stream.toolCalls, v2Stream.codeBlocks, result])
 
   // Focus input on mount
   useEffect(() => {
@@ -41,12 +49,21 @@ export default function RLMChat({ sessionId }) {
     e.preventDefault()
     if (!input.trim() || isStreaming) return
 
-    reset()
-    startStream({
-      sessionId,
-      query: input.trim(),
-      maxTokens
-    })
+    activeStream.reset()
+
+    if (isV2) {
+      v2Stream.startStream({
+        sessionId,
+        query: input.trim(),
+        maxTokens,
+      })
+    } else {
+      v1Stream.startStream({
+        sessionId,
+        query: input.trim(),
+        maxTokens,
+      })
+    }
     setInput('')
   }
 
@@ -57,9 +74,6 @@ export default function RLMChat({ sessionId }) {
     }
   }
 
-  const { fontSize, setFontSize } = useReaderStore()
-  const { maxTokens, setMaxTokens } = useResearchStore()
-
   return (
     <div className="h-full flex flex-col">
       {/* Messages area */}
@@ -67,6 +81,19 @@ export default function RLMChat({ sessionId }) {
         {/* Controls bar */}
         <div className="sticky top-0 z-10 bg-base/95 backdrop-blur-sm border-b border-subtle/30">
           <div className="max-w-3xl mx-auto px-6 py-2 flex items-center justify-end gap-6">
+            {/* Mode selector */}
+            <div className="flex items-center gap-2 text-muted">
+              <select
+                value={rlmMode}
+                onChange={(e) => setRlmMode(e.target.value)}
+                disabled={isStreaming}
+                className="text-xs bg-surface border border-subtle/50 rounded px-2 py-1 text-secondary focus:outline-none focus:border-camel/50 disabled:opacity-50"
+                title="Research engine mode"
+              >
+                <option value="tool-use">Tool Use</option>
+                <option value="code">RLM (Code)</option>
+              </select>
+            </div>
             {/* Max tokens selector */}
             <div className="flex items-center gap-2 text-muted">
               <span className="text-xs">Tokens</span>
@@ -120,26 +147,27 @@ export default function RLMChat({ sessionId }) {
 
               {/* Streaming state */}
               {isStreaming && (
-                <StreamingState
-                  toolCalls={toolCalls}
-                  currentIteration={currentIteration}
-                  onStop={stopStream}
-                />
+                isV2 ? (
+                  <StreamingStateV2
+                    codeBlocks={v2Stream.codeBlocks}
+                    currentIteration={v2Stream.currentIteration}
+                    isSynthesizing={v2Stream.isSynthesizing}
+                    synthesisModel={v2Stream.synthesisModel}
+                    onStop={v2Stream.stopStream}
+                  />
+                ) : (
+                  <StreamingState
+                    toolCalls={v1Stream.toolCalls}
+                    currentIteration={v1Stream.currentIteration}
+                    onStop={v1Stream.stopStream}
+                  />
+                )
               )}
 
               {/* Streaming result (before saved to DB) */}
               {result && !isStreaming && !messages.some(m => m.id === result.message_id) && (
                 <MessageBubble
-                  message={{
-                    id: result.message_id,
-                    role: 'assistant',
-                    content: result.content,
-                    context_snapshot: {
-                      type: 'rlm',
-                      tool_calls: result.tool_calls,
-                      iterations: result.iterations
-                    }
-                  }}
+                  message={buildResultMessage(result, isV2)}
                   fontSize={fontSize}
                   isNew
                   onSaveAsNote={saveMessage.mutate}
@@ -167,18 +195,23 @@ export default function RLMChat({ sessionId }) {
             <textarea
               ref={inputRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value)
+                // Auto-resize: reset height then set to scrollHeight
+                e.target.style.height = 'auto'
+                e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px'
+              }}
               onKeyDown={handleKeyDown}
               placeholder="Ask a research question..."
-              rows={1}
+              rows={2}
               disabled={isStreaming}
               className="w-full px-4 py-3 pr-12 text-sm bg-base border border-subtle/50 rounded-lg text-primary placeholder-muted resize-none focus:outline-none focus:border-camel/50 disabled:opacity-50"
-              style={{ minHeight: '48px', maxHeight: '200px' }}
+              style={{ minHeight: '64px', maxHeight: '200px', overflow: 'auto' }}
             />
             <button
               type="submit"
               disabled={!input.trim() || isStreaming}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-camel hover:text-camel/80 disabled:text-muted disabled:cursor-not-allowed transition-colors"
+              className="absolute right-2 bottom-2 p-2 text-camel hover:text-camel/80 disabled:text-muted disabled:cursor-not-allowed transition-colors"
             >
               {isStreaming ? (
                 <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -193,11 +226,14 @@ export default function RLMChat({ sessionId }) {
             </button>
           </div>
           <div className="mt-2 text-xs text-muted flex items-center justify-between">
-            <span>Press Enter to send, Shift+Enter for new line</span>
+            <span>
+              Press Enter to send, Shift+Enter for new line
+              {isV2 && <span className="ml-2 text-camel/60">| RLM Code mode</span>}
+            </span>
             {isStreaming && (
               <button
                 type="button"
-                onClick={stopStream}
+                onClick={activeStream.stopStream}
                 className="text-terra hover:text-terra/80"
               >
                 Stop generating
@@ -211,9 +247,48 @@ export default function RLMChat({ sessionId }) {
 }
 
 /**
+ * Build a message object from a streaming result for display.
+ */
+function buildResultMessage(result, isV2) {
+  if (isV2) {
+    const usage = result.usage?.total || {}
+    return {
+      id: result.message_id,
+      role: 'assistant',
+      content: result.content,
+      usage: {
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        cost_usd: usage.cost_usd,
+      },
+      context_snapshot: {
+        type: 'rlm-v2',
+        iterations: result.iterations,
+        sub_llm_calls: result.sub_llm_calls,
+        orchestrator_cost: result.usage?.orchestrator?.cost_usd,
+        sub_llm_cost: result.usage?.sub_llm?.cost_usd,
+        synthesis_cost: result.usage?.synthesis?.cost_usd,
+        synthesis_model: result.usage?.synthesis?.model,
+      }
+    }
+  }
+
+  // V1 tool-use format
+  return {
+    id: result.message_id,
+    role: 'assistant',
+    content: result.content,
+    usage: result.usage,
+    context_snapshot: {
+      type: 'rlm',
+      tool_calls: result.tool_calls,
+      iterations: result.iterations
+    }
+  }
+}
+
+/**
  * EmptyChat
- * =========
- * Shown when no messages exist yet.
  */
 function EmptyChat() {
   return (
@@ -247,15 +322,39 @@ function SuggestedQuery({ text }) {
 /**
  * MessageBubble
  * =============
- * Renders a single chat message.
+ * Renders a single chat message. Handles both v1 (rlm) and v2 (rlm-v2) metadata.
  */
 function MessageBubble({ message, fontSize = 16, isNew = false, onSaveAsNote, isSaving }) {
+  const [copied, setCopied] = useState(false)
   const isUser = message.role === 'user'
-  const isRLM = message.context_snapshot?.type === 'rlm'
+  const snapshotType = message.context_snapshot?.type
+  const isRLM = snapshotType === 'rlm'
+  const isRLMV2 = snapshotType === 'rlm-v2'
+
+  // Resolve cost from flat (v1) or nested (v2) usage structure
+  const costUsd = message.usage?.cost_usd ?? message.usage?.total?.cost_usd ?? 0
 
   const handleSave = () => {
     if (message.id && onSaveAsNote) {
       onSaveAsNote(message.id)
+    }
+  }
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(message.content)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Fallback for older browsers
+      const textarea = document.createElement('textarea')
+      textarea.value = message.content
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textarea)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
     }
   }
 
@@ -271,15 +370,46 @@ function MessageBubble({ message, fontSize = 16, isNew = false, onSaveAsNote, is
           ${isNew ? 'animate-fade-in' : ''}
         `}
       >
-        {/* RLM metadata badge */}
+        {/* RLM v1 metadata badge */}
         {isRLM && !isUser && (
           <div className="mb-2 flex items-center gap-2 text-xs text-muted">
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
             </svg>
             <span>{message.context_snapshot.tool_calls} tool calls</span>
-            <span>•</span>
+            <span className="text-muted/50">/</span>
             <span>{message.context_snapshot.iterations} iterations</span>
+            {costUsd > 0 && (
+              <>
+                <span className="text-muted/50">/</span>
+                <span className="text-camel">{formatCost(costUsd)}</span>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* RLM v2 metadata badge */}
+        {isRLMV2 && !isUser && (
+          <div className="mb-2 flex items-center gap-2 text-xs text-muted">
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+            </svg>
+            <span className="text-blue-400 font-medium">RLM</span>
+            <span>{message.context_snapshot.iterations} iter</span>
+            <span className="text-muted/50">/</span>
+            <span>{message.context_snapshot.sub_llm_calls} sub-queries</span>
+            {message.context_snapshot.synthesis_model && (
+              <>
+                <span className="text-muted/50">/</span>
+                <span className="text-purple-400">Opus synthesis</span>
+              </>
+            )}
+            {costUsd > 0 && (
+              <>
+                <span className="text-muted/50">/</span>
+                <span className="text-camel">{formatCost(costUsd)}</span>
+              </>
+            )}
           </div>
         )}
 
@@ -299,6 +429,12 @@ function MessageBubble({ message, fontSize = 16, isNew = false, onSaveAsNote, is
         {!isUser && message.id && (
           <div className="mt-3 pt-2 border-t border-subtle/30 flex items-center gap-3">
             <button
+              onClick={handleCopy}
+              className="text-xs text-muted hover:text-camel transition-colors"
+            >
+              {copied ? 'Copied!' : 'Copy'}
+            </button>
+            <button
               onClick={handleSave}
               disabled={isSaving}
               className="text-xs text-muted hover:text-camel transition-colors disabled:opacity-50"
@@ -313,14 +449,11 @@ function MessageBubble({ message, fontSize = 16, isNew = false, onSaveAsNote, is
 }
 
 /**
- * StreamingState
- * ==============
- * Shows real-time progress during RLM execution.
+ * StreamingState (V1 - Tool Use)
  */
 function StreamingState({ toolCalls, currentIteration, onStop }) {
   return (
     <div className="space-y-3">
-      {/* Progress indicator */}
       <div className="flex items-center gap-3 text-sm text-tertiary">
         <div className="flex items-center gap-2">
           <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -331,9 +464,47 @@ function StreamingState({ toolCalls, currentIteration, onStop }) {
         </div>
       </div>
 
-      {/* Tool calls feed */}
       {toolCalls.length > 0 && (
         <ToolCallFeed toolCalls={toolCalls} />
+      )}
+    </div>
+  )
+}
+
+/**
+ * StreamingStateV2 (V2 - Code Execution)
+ */
+function StreamingStateV2({ codeBlocks, currentIteration, isSynthesizing, synthesisModel, onStop }) {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-3 text-sm text-tertiary">
+        <div className="flex items-center gap-2">
+          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+          {isSynthesizing ? (
+            <span className="text-purple-400">
+              Synthesizing with Opus...
+            </span>
+          ) : (
+            <span>
+              Exploring documents... (iteration {currentIteration})
+            </span>
+          )}
+          {!isSynthesizing && codeBlocks.length > 0 && (
+            <span className="text-muted">
+              | {codeBlocks.length} blocks
+              {codeBlocks.reduce((sum, b) => sum + (b.subLlmCount || 0), 0) > 0 &&
+                ` | ${codeBlocks.reduce((sum, b) => sum + (b.subLlmCount || 0), 0)} sub-queries`
+              }
+            </span>
+          )}
+        </div>
+      </div>
+
+      {codeBlocks.length > 0 && (
+        <CodeBlockFeed codeBlocks={codeBlocks} />
       )}
     </div>
   )

@@ -39,6 +39,7 @@ const useResearchStore = create((set, get) => ({
 
   // RLM settings
   maxTokens: 12288,  // Max tokens for LLM responses (default: 12288)
+  rlmMode: 'code',  // 'tool-use' (v1) or 'code' (v2)
 
   // Actions
   setActiveSession: (sessionId) => set({ activeSessionId: sessionId }),
@@ -46,6 +47,8 @@ const useResearchStore = create((set, get) => ({
   clearActiveSession: () => set({ activeSessionId: null }),
 
   setMaxTokens: (tokens) => set({ maxTokens: tokens }),
+
+  setRlmMode: (mode) => set({ rlmMode: mode }),
 
   setWidth: (pane, width) => {
     const newWidths = { ...get().widths, [pane]: width }

@@ -199,6 +199,7 @@ class ChatService:
 
         payload["system"] = system_blocks
 
+        last_error = "Unknown error"
         for attempt in range(MAX_RETRIES):
             try:
                 self._log(f"Anthropic attempt {attempt + 1}/{MAX_RETRIES}")
@@ -220,21 +221,24 @@ class ChatService:
                     }
                 else:
                     error_text = response.text[:200]
+                    last_error = f"HTTP {response.status_code}: {error_text}"
                     self._log(f"Anthropic error {response.status_code}: {error_text}")
                     if attempt < MAX_RETRIES - 1:
                         await asyncio.sleep(RETRY_DELAY * (attempt + 1))
             except asyncio.TimeoutError:
+                last_error = f"Timeout after 120s on attempt {attempt + 1}"
                 self._log(f"Anthropic timeout on attempt {attempt + 1}")
                 if attempt < MAX_RETRIES - 1:
                     await asyncio.sleep(RETRY_DELAY * (attempt + 1))
             except Exception as e:
-                self._log(f"Anthropic exception: {str(e)}")
+                last_error = f"{type(e).__name__}: {e}"
+                self._log(f"Anthropic exception ({type(e).__name__}): {e}")
                 if attempt < MAX_RETRIES - 1:
                     await asyncio.sleep(RETRY_DELAY * (attempt + 1))
 
         return {
             "success": False,
-            "error": "Max retries exceeded",
+            "error": f"Max retries exceeded — last error: {last_error}",
             "content": None
         }
 
@@ -475,6 +479,7 @@ When answering, reference specific parts of the document when relevant."""
         if system:
             payload["system"] = system
 
+        last_error = "Unknown error"
         for attempt in range(MAX_RETRIES):
             try:
                 self._log(f"Anthropic (tools) attempt {attempt + 1}/{MAX_RETRIES}")
@@ -509,28 +514,31 @@ When answering, reference specific parts of the document when relevant."""
                         "success": True,
                         "content": text_content,
                         "tool_uses": tool_uses,
-                        "raw_content": content_blocks,  # For reconstructing messages
+                        "raw_content": content_blocks,
                         "stop_reason": stop_reason,
                         "usage": usage,
                         "model": config["model"]
                     }
                 else:
                     error_text = response.text[:200]
+                    last_error = f"HTTP {response.status_code}: {error_text}"
                     self._log(f"Anthropic error {response.status_code}: {error_text}")
                     if attempt < MAX_RETRIES - 1:
                         await asyncio.sleep(RETRY_DELAY * (attempt + 1))
             except asyncio.TimeoutError:
+                last_error = f"Timeout after 180s on attempt {attempt + 1}"
                 self._log(f"Anthropic timeout on attempt {attempt + 1}")
                 if attempt < MAX_RETRIES - 1:
                     await asyncio.sleep(RETRY_DELAY * (attempt + 1))
             except Exception as e:
-                self._log(f"Anthropic exception: {str(e)}")
+                last_error = f"{type(e).__name__}: {e}"
+                self._log(f"Anthropic exception ({type(e).__name__}): {e}")
                 if attempt < MAX_RETRIES - 1:
                     await asyncio.sleep(RETRY_DELAY * (attempt + 1))
 
         return {
             "success": False,
-            "error": "Max retries exceeded",
+            "error": f"Max retries exceeded — last error: {last_error}",
             "content": None
         }
 
