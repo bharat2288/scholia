@@ -235,6 +235,30 @@ export function MarkdownContent({ content, className = "", navigateToRef, inheri
         continue
       }
 
+      // Blockquote lines — collect consecutive > lines into one block
+      if (line.match(/^>\s?/)) {
+        const quoteLines = []
+        let j = i
+        while (j < lines.length && lines[j].match(/^>\s?/)) {
+          quoteLines.push(lines[j].replace(/^>\s?/, ''))
+          j++
+        }
+        elements.push(
+          <blockquote
+            key={key++}
+            className="border-l-2 border-camel/40 pl-4 my-2 italic text-secondary/80"
+          >
+            {quoteLines.map((ql, qi) => (
+              <p key={qi} className={`${textClass} my-0.5`}>
+                {renderInlineElements(ql, navigateToRef, `bq-${i}-${qi}`)}
+              </p>
+            ))}
+          </blockquote>
+        )
+        i = j - 1  // -1 because the for loop will increment
+        continue
+      }
+
       // Empty line
       if (line.trim() === '') {
         elements.push(<div key={key++} className="h-2" />)

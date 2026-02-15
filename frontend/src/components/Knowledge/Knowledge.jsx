@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAllNotes, useAllHighlights, useTags, useGluonSearch, useDeleteNote, useAllPeople, useDeleteGluon } from '../../hooks/useApi'
 import { useAllConversations, useDeleteConversation } from '../../hooks/useCouncil'
 import { MarkdownPreview, useRefNavigation } from '../../utils/markdown'
+import JournalPanel from './JournalPanel'
 
 /**
  * Knowledge View
@@ -121,6 +122,12 @@ export default function Knowledge() {
               People
             </TabButton>
             <TabButton
+              active={activeTab === 'journal'}
+              onClick={() => setActiveTab('journal')}
+            >
+              Journal
+            </TabButton>
+            <TabButton
               active={activeTab === 'chats'}
               onClick={() => setActiveTab('chats')}
             >
@@ -150,6 +157,9 @@ export default function Knowledge() {
         )}
         {activeTab === 'people' && (
           <PeoplePanel searchQuery={searchQuery} />
+        )}
+        {activeTab === 'journal' && (
+          <JournalPanel searchQuery={searchQuery} />
         )}
         {activeTab === 'chats' && (
           <ChatsPanel searchQuery={searchQuery} />
@@ -428,8 +438,23 @@ function HighlightCard({ highlight, onNavigate, onOpenHighlight }) {
 }
 
 
+const TAG_SORT_OPTIONS = [
+  { key: 'usage', label: 'Most Used' },
+  { key: 'az', label: 'A → Z' },
+  { key: 'za', label: 'Z → A' },
+]
+
+function sortTags(tags, sortKey) {
+  return [...tags].sort((a, b) => {
+    if (sortKey === 'az') return (a.name || '').localeCompare(b.name || '')
+    if (sortKey === 'za') return (b.name || '').localeCompare(a.name || '')
+    return (b.usage_count || 0) - (a.usage_count || 0)
+  })
+}
+
 function TagsPanel({ searchQuery, onTagClick }) {
   const { data: tags, isLoading, error } = useTags()
+  const [sortBy, setSortBy] = useState('usage')
 
   if (isLoading) {
     return <div className="text-secondary">Loading tags...</div>
@@ -446,14 +471,30 @@ function TagsPanel({ searchQuery, onTagClick }) {
       )
     : (tags || [])
 
-  // Sort by usage count (descending)
-  const sortedTags = [...filteredTags].sort((a, b) => (b.usage_count || 0) - (a.usage_count || 0))
+  const sortedTags = sortTags(filteredTags, sortBy)
 
   return (
     <div>
-      <p className="label text-camel mb-4">
-        {sortedTags.length} Tag{sortedTags.length !== 1 ? 's' : ''}
-      </p>
+      <div className="flex items-center justify-between mb-4">
+        <p className="label text-camel">
+          {sortedTags.length} Tag{sortedTags.length !== 1 ? 's' : ''}
+        </p>
+        <div className="flex gap-1">
+          {TAG_SORT_OPTIONS.map(opt => (
+            <button
+              key={opt.key}
+              onClick={() => setSortBy(opt.key)}
+              className={`px-2 py-0.5 text-xs rounded transition-colors ${
+                sortBy === opt.key
+                  ? 'bg-camel/20 text-camel font-semibold'
+                  : 'text-muted hover:text-secondary'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {sortedTags.length === 0 ? (
         <div className="text-muted text-center py-12">

@@ -46,7 +46,7 @@ function NodeSVG({ className = "" }) {
 
 // TypeBadge now imported from common/ItemCard as TypeIndicator
 
-// Gluon card for displaying linked gluons
+// Gluon card for displaying linked gluons (notes, highlights, journal entries)
 function GluonCard({ gluon, showType = true }) {
   const navigate = useNavigate()
 
@@ -56,6 +56,15 @@ function GluonCard({ gluon, showType = true }) {
       navigate(`/read/${gluon.source_id}`)
     }
   }
+
+  const isJournal = gluon.type === 'journal_entry'
+  const isTask = isJournal && gluon.completed !== null && gluon.completed !== undefined
+  const isCompleted = gluon.completed === 1
+
+  // Parse body into sub-bullets for journal entries
+  const bodyLines = isJournal && gluon.body
+    ? gluon.body.split('\n').filter(l => l.trim())
+    : []
 
   return (
     <button
@@ -67,9 +76,30 @@ function GluonCard({ gluon, showType = true }) {
       <div className="flex items-start gap-3">
         {showType && <TypeIndicator type={gluon.type} />}
         <div className="flex-1 min-w-0">
-          <p className="text-secondary group-hover:text-primary transition-colors truncate">
+          {/* Content — strikethrough for completed tasks */}
+          <p className={`group-hover:text-primary transition-colors ${
+            isCompleted ? 'line-through text-muted' : 'text-secondary'
+          } ${isJournal ? '' : 'truncate'}`}>
+            {isTask && (
+              <span className={`inline-block w-3.5 h-3.5 mr-1.5 rounded border align-text-bottom ${
+                isCompleted ? 'bg-camel border-camel' : 'border-muted'
+              }`} />
+            )}
             {gluon.content || <span className="text-muted italic">Empty</span>}
           </p>
+
+          {/* Journal entry body sub-bullets */}
+          {bodyLines.length > 0 && (
+            <ul className="mt-1 space-y-0.5 pl-1">
+              {bodyLines.map((line, i) => (
+                <li key={i} className="text-xs text-tertiary flex items-start gap-1.5">
+                  <span className="text-muted mt-0.5">–</span>
+                  <span>{line}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+
           {gluon.source_title && gluon.source_id && (
             <span
               onClick={handleDocumentClick}
@@ -598,15 +628,15 @@ export default function Gluon() {
           </Section>
         )}
 
-        {/* Keyword of: show sources that use this tag as a keyword */}
-        {gluon.keyword_of && gluon.keyword_of.length > 0 && (
+        {/* Tagged sources: show source documents that carry this tag */}
+        {gluon.tag_of && gluon.tag_of.length > 0 && (
           <Section
-            title="Keyword Of"
-            count={gluon.keyword_of.length}
+            title="Source Documents"
+            count={gluon.tag_of.length}
             emptyMessage=""
           >
-            {gluon.keyword_of.map(source => (
-              <SourceCard key={source.id} source={source} role="keyword" />
+            {gluon.tag_of.map(source => (
+              <SourceCard key={source.id} source={source} role="tag" />
             ))}
           </Section>
         )}

@@ -845,6 +845,100 @@ export function useFindOrCreatePeople() {
 }
 
 // ============================================================
+// Journal
+// ============================================================
+
+/**
+ * Fetch journal entries grouped by date then category
+ */
+export function useJournalEntries(days = 30, category = null) {
+  const params = new URLSearchParams({ days: days.toString() })
+  if (category) params.set('category', category)
+
+  return useQuery({
+    queryKey: ['journal', days, category],
+    queryFn: () => apiFetch(`/journal?${params}`),
+  })
+}
+
+/**
+ * Fetch distinct category tags used by journal entries (with counts)
+ */
+export function useJournalCategories() {
+  return useQuery({
+    queryKey: ['journal', 'categories'],
+    queryFn: () => apiFetch('/journal/categories'),
+  })
+}
+
+/**
+ * Create a new journal entry
+ */
+export function useCreateJournalEntry() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (entry) => apiFetch('/journal', {
+      method: 'POST',
+      body: JSON.stringify(entry),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['journal'] })
+      queryClient.invalidateQueries({ queryKey: ['tags'] })
+    },
+  })
+}
+
+/**
+ * Update a journal entry (content, body, category)
+ */
+export function useUpdateJournalEntry() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ id, ...updates }) => apiFetch(`/journal/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['journal'] })
+    },
+  })
+}
+
+/**
+ * Toggle task completion
+ */
+export function useToggleJournalComplete() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ id, completed }) => apiFetch(`/journal/${id}/complete`, {
+      method: 'PATCH',
+      body: JSON.stringify({ completed }),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['journal'] })
+    },
+  })
+}
+
+/**
+ * Delete a journal entry
+ */
+export function useDeleteJournalEntry() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (id) => apiFetch(`/journal/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['journal'] })
+      queryClient.invalidateQueries({ queryKey: ['tags'] })
+    },
+  })
+}
+
+// ============================================================
 // Health
 // ============================================================
 
