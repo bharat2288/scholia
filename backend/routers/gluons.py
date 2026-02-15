@@ -698,11 +698,13 @@ async def get_gluon(gluon_id: str):
     gluon["tags"] = [dict(zip(columns, r)) for r in rows]
 
     # Get backlinks (what references this gluon) - include link_type to distinguish tag vs reference
+    # Also include body + completed for journal_entry rendering
     cursor = await db.execute("""
         SELECT g.id, g.type, g.content, g.source_id, g.section_id,
                g.parent_gluon_id, g.created_at, g.updated_at,
                l.link_type,
-               s.title as source_title
+               s.title as source_title,
+               g.body, g.completed
         FROM gluons g
         JOIN links l ON l.source_id = g.id
         LEFT JOIN sources s ON g.source_id = s.id

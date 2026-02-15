@@ -103,7 +103,7 @@ async def health():
 
 
 # Import routers
-from routers import sources, reading, highlights, gluons, processor, runpod, metadata_lookup, council, chat, sessions, whatsapp
+from routers import sources, reading, highlights, gluons, processor, runpod, metadata_lookup, council, chat, sessions, whatsapp, journal
 
 # Register routers
 app.include_router(sources.router, prefix="/sources", tags=["sources"])
@@ -119,6 +119,7 @@ app.include_router(council.router, prefix="/council", tags=["council"])
 app.include_router(chat.router, prefix="/chat", tags=["chat"])
 app.include_router(sessions.router, prefix="/sessions", tags=["sessions"])
 app.include_router(whatsapp.router)  # WhatsApp webhook (prefix defined in router)
+app.include_router(journal.router, prefix="/journal", tags=["journal"])
 
 
 # Note: RunPod endpoints now handled by routers/runpod.py

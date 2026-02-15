@@ -589,14 +589,14 @@ async def _create_schema():
         )
     """)
 
-    # Gluons table - universal linkable objects (highlights, notes, tags)
+    # Gluons table - universal linkable objects (highlights, notes, tags, journal entries)
     # Named after the particle that binds quarks - knowledge units that bind together
     # source_id uses SET NULL to allow orphan gluons (user choice at delete time)
     await _db.execute("""
         CREATE TABLE IF NOT EXISTS gluons (
             id TEXT PRIMARY KEY,
-            type TEXT NOT NULL,         -- 'highlight', 'note', 'tag'
-            content TEXT,               -- Text content
+            type TEXT NOT NULL,         -- 'highlight', 'note', 'tag', 'journal_entry'
+            content TEXT,               -- Text content (header for journal entries)
             source_id TEXT REFERENCES sources(id) ON DELETE SET NULL,
             section_id TEXT REFERENCES sections(id) ON DELETE SET NULL,
 
@@ -610,6 +610,10 @@ async def _create_schema():
 
             -- Capture source tracking
             captured_via TEXT,          -- 'whatsapp', 'web', null for manual
+
+            -- For journal entries
+            body TEXT,                  -- Sub-bullets/details
+            completed INTEGER,          -- NULL=not a task, 0=pending, 1=done
 
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
@@ -1258,6 +1262,34 @@ async def _create_schema():
         )
         await _db.commit()
         print(f"Migration complete: Backfilled cost for {updated} RLM messages")
+
+    # Migration: Add journal entry fields to gluons (body, completed)
+    cursor = await _db.execute(
+        "SELECT name FROM _migrations WHERE name = 'gluons_add_journal_fields'"
+    )
+    if not await cursor.fetchone():
+        print("Migrating: Adding journal entry fields to gluons...")
+
+        cursor = await _db.execute("PRAGMA table_info(gluons)")
+        existing_columns = {row[1] for row in await cursor.fetchall()}
+
+        if "body" not in existing_columns:
+            await _db.execute("ALTER TABLE gluons ADD COLUMN body TEXT")
+
+        if "completed" not in existing_columns:
+            await _db.execute("ALTER TABLE gluons ADD COLUMN completed INTEGER")
+
+        # Index for efficient date-ordered journal queries
+        await _db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_gluons_journal
+            ON gluons(type, created_at DESC)
+        """)
+
+        await _db.execute(
+            "INSERT INTO _migrations (name) VALUES ('gluons_add_journal_fields')"
+        )
+        await _db.commit()
+        print("Migration complete: Added body and completed columns to gluons")
 
     await _db.commit()
     print("Database schema created/verified")
