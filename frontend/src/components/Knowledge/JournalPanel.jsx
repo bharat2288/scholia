@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   useJournalEntries,
@@ -10,6 +10,7 @@ import {
   useDeleteJournalEntry,
 } from '../../hooks/useApi'
 import { MarkdownPreview, useRefNavigation } from '../../utils/markdown'
+import AutocompleteTextarea from '../common/AutocompleteTextarea'
 
 /**
  * JournalPanel
@@ -174,35 +175,21 @@ export default function JournalPanel({ searchQuery }) {
 function JournalEntryForm({ onClose }) {
   const [content, setContent] = useState('')
   const [body, setBody] = useState('')
-  const [category, setCategory] = useState('task')
-  const [customTag, setCustomTag] = useState('')
-  const [isTask, setIsTask] = useState(true)
   const createEntry = useCreateJournalEntry()
   const queryClient = useQueryClient()
-  const inputRef = useRef(null)
 
-  useEffect(() => {
-    inputRef.current?.focus()
-  }, [])
-
-  // Sync isTask with category
-  const handleCategoryChange = (cat) => {
-    setCategory(cat)
-    setCustomTag('')
-    setIsTask(cat === 'task')
+  // Derive category and is_task from ##tags in content at submit time
+  const deriveCategory = (text) => {
+    const tagMatches = text.match(/##(\w+)/g)
+    const tags = tagMatches ? tagMatches.map(t => t.slice(2).toLowerCase()) : []
+    const priority = ['task', 'idea', 'social', 'admin', 'inbox']
+    const category = tags.find(t => priority.includes(t)) || tags[0] || 'inbox'
+    return { category, isTask: category === 'task' }
   }
 
-  const handleCustomTagSubmit = () => {
-    const tag = customTag.trim().toLowerCase()
-    if (tag) {
-      setCategory(tag)
-      setIsTask(tag === 'task')
-    }
-  }
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
+  const handleSubmit = async () => {
     if (!content.trim()) return
+    const { category, isTask } = deriveCategory(content)
 
     try {
       await createEntry.mutateAsync({
@@ -211,7 +198,6 @@ function JournalEntryForm({ onClose }) {
         category,
         is_task: isTask,
       })
-      // Wait for refetch to complete before closing form
       await queryClient.refetchQueries({ queryKey: ['journal'] })
       setContent('')
       setBody('')
@@ -221,92 +207,36 @@ function JournalEntryForm({ onClose }) {
     }
   }
 
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && e.target === inputRef.current) {
-      e.preventDefault()
-      handleSubmit(e)
-    }
-    if (e.key === 'Escape') {
-      onClose()
-    }
-  }
-
   return (
-    <form onSubmit={handleSubmit} className="bg-surface border border-subtle rounded-lg p-4 mb-6">
-      {/* Content input */}
-      <input
-        ref={inputRef}
-        type="text"
+    <form onSubmit={(e) => { e.preventDefault(); handleSubmit() }} className="bg-surface border border-subtle rounded-lg p-4 mb-6">
+      {/* Content input with [[ref]] and ##tag autocomplete */}
+      <AutocompleteTextarea
         value={content}
-        onChange={(e) => setContent(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder="What's on your mind?"
-        className="w-full px-3 py-2 bg-base border border-subtle rounded-lg
-                   text-primary placeholder:text-muted
-                   focus:outline-none focus:border-camel transition-colors mb-3"
+        onChange={setContent}
+        onSubmit={handleSubmit}
+        onCancel={onClose}
+        placeholder="What's on your mind?  Use ##tag to categorize, [[name]] to reference"
+        autoFocus
+        inputMode="input"
+        className="mb-3"
       />
 
-      {/* Details textarea (optional) */}
-      <textarea
+      {/* Details textarea with autocomplete */}
+      <AutocompleteTextarea
         value={body}
-        onChange={(e) => setBody(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Escape') onClose() }}
+        onChange={setBody}
+        onCancel={onClose}
         placeholder="Details (optional, one per line)..."
-        className="w-full px-3 py-2 bg-base border border-subtle rounded-lg
-                   text-secondary placeholder:text-muted text-sm
-                   focus:outline-none focus:border-camel transition-colors
-                   resize-none mb-3"
         rows={2}
+        inputMode="textarea"
+        className="mb-3"
       />
 
-      {/* Category selector: suggested chips + custom input */}
+      {/* Submit row */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {DEFAULT_CATEGORIES.map(cat => (
-            <button
-              key={cat}
-              type="button"
-              onClick={() => handleCategoryChange(cat)}
-              className={`px-2.5 py-1 text-xs rounded-full transition-colors ${
-                category === cat && !customTag
-                  ? 'bg-camel/20 text-camel font-semibold'
-                  : 'bg-raised text-muted hover:text-secondary'
-              }`}
-            >
-              {cat.charAt(0).toUpperCase() + cat.slice(1)}
-            </button>
-          ))}
-          <input
-            type="text"
-            value={customTag}
-            onChange={(e) => {
-              setCustomTag(e.target.value)
-              const tag = e.target.value.trim().toLowerCase()
-              if (tag) {
-                setCategory(tag)
-                setIsTask(tag === 'task')
-              }
-            }}
-            onBlur={handleCustomTagSubmit}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') { e.preventDefault(); handleCustomTagSubmit() }
-              if (e.key === 'Escape') onClose()
-            }}
-            placeholder="custom..."
-            className={`px-2.5 py-1 text-xs rounded-full bg-raised text-secondary
-                       placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-camel
-                       w-20 transition-all ${
-                         customTag ? 'ring-1 ring-camel text-camel' : ''
-                       }`}
-          />
-          {/* Show active custom tag as chip */}
-          {category && !DEFAULT_CATEGORIES.includes(category) && (
-            <span className="px-2.5 py-1 text-xs rounded-full bg-camel/20 text-camel font-semibold">
-              {category}
-            </span>
-          )}
-        </div>
-
+        <p className="text-xs text-muted">
+          <span className="text-pink-400">##task</span> <span className="text-pink-400">##idea</span> <span className="text-pink-400">##social</span> — or any custom tag
+        </p>
         <div className="flex gap-2">
           <button
             type="button"
@@ -365,6 +295,7 @@ function DateGroup({ date, categories, tagMap, searchQuery }) {
               category={cat}
               tagId={tagMap[cat]}
               entries={catEntries}
+              tagMap={tagMap}
             />
           )
         })}
@@ -374,7 +305,7 @@ function DateGroup({ date, categories, tagMap, searchQuery }) {
 }
 
 
-function CategorySection({ category, tagId, entries }) {
+function CategorySection({ category, tagId, entries, tagMap }) {
   return (
     <div>
       {tagId ? (
@@ -386,7 +317,7 @@ function CategorySection({ category, tagId, entries }) {
       )}
       <div className="space-y-1">
         {entries.map(entry => (
-          <JournalEntryRow key={entry.id} entry={entry} />
+          <JournalEntryRow key={entry.id} entry={entry} primaryCategory={category} tagMap={tagMap} />
         ))}
       </div>
     </div>
@@ -394,16 +325,52 @@ function CategorySection({ category, tagId, entries }) {
 }
 
 
-function JournalEntryRow({ entry }) {
-  const navigate = useNavigate()
+const COLLAPSE_THRESHOLD = 2
+
+function CollapsibleBody({ lines }) {
+  const [expanded, setExpanded] = useState(false)
+  const canCollapse = lines.length > COLLAPSE_THRESHOLD
+  const visibleLines = canCollapse && !expanded ? lines.slice(0, COLLAPSE_THRESHOLD) : lines
+  const hiddenCount = lines.length - COLLAPSE_THRESHOLD
+
+  return (
+    <ul className="mt-1 space-y-0.5 pl-3">
+      {visibleLines.map((line, i) => (
+        <li key={i} className="text-xs text-tertiary flex items-start gap-1.5">
+          <span className="text-muted mt-0.5">–</span>
+          <span>{line}</span>
+        </li>
+      ))}
+      {canCollapse && (
+        <li className="text-xs">
+          <button
+            onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }}
+            className="text-muted hover:text-camel transition-colors flex items-center gap-1"
+          >
+            <svg
+              className={`w-3 h-3 transition-transform ${expanded ? 'rotate-90' : ''}`}
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            {expanded ? 'Show less' : `${hiddenCount} more...`}
+          </button>
+        </li>
+      )}
+    </ul>
+  )
+}
+
+
+function JournalEntryRow({ entry, primaryCategory, tagMap = {} }) {
   const navigateToRef = useRefNavigation()
   const toggleComplete = useToggleJournalComplete()
   const deleteEntry = useDeleteJournalEntry()
   const updateEntry = useUpdateJournalEntry()
 
   const [isEditing, setIsEditing] = useState(false)
-  const [editContent, setEditContent] = useState(entry.content)
-  const [editBody, setEditBody] = useState(entry.body || '')
+  const [editContent, setEditContent] = useState('')
+  const [editBody, setEditBody] = useState('')
   const editRef = useRef(null)
   const editContainerRef = useRef(null)
 
@@ -425,26 +392,14 @@ function JournalEntryRow({ entry }) {
 
   const handleSave = () => {
     const trimmed = editContent.trim()
-    if (trimmed && (trimmed !== entry.content || editBody !== (entry.body || ''))) {
-      updateEntry.mutate({
-        id: entry.id,
-        content: trimmed,
-        body: editBody.trim() || null,
-      })
-    }
+    if (!trimmed) { setIsEditing(false); return }
+    // Always send update — tags may have changed even if text looks "same"
+    updateEntry.mutate({
+      id: entry.id,
+      content: trimmed,
+      body: editBody.trim() || null,
+    })
     setIsEditing(false)
-  }
-
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && e.target.tagName !== 'TEXTAREA') {
-      e.preventDefault()
-      handleSave()
-    }
-    if (e.key === 'Escape') {
-      setEditContent(entry.content)
-      setEditBody(entry.body || '')
-      setIsEditing(false)
-    }
   }
 
   const handleDelete = (e) => {
@@ -453,6 +408,9 @@ function JournalEntryRow({ entry }) {
       deleteEntry.mutate(entry.id)
     }
   }
+
+  // Tags other than the primary grouping category
+  const secondaryTags = entry.tags?.filter(t => t !== primaryCategory) || []
 
   // Parse body into sub-bullets
   const bodyLines = entry.body
@@ -496,28 +454,39 @@ function JournalEntryRow({ entry }) {
               }
             }}
           >
-            <input
-              ref={editRef}
-              type="text"
+            <AutocompleteTextarea
               value={editContent}
-              onChange={(e) => setEditContent(e.target.value)}
-              onKeyDown={handleKeyDown}
-              className="w-full px-2 py-1 bg-base border border-subtle rounded
-                         text-sm text-primary focus:outline-none focus:border-camel"
+              onChange={setEditContent}
+              onSubmit={handleSave}
+              onCancel={() => setIsEditing(false)}
+              inputMode="input"
+              autoFocus
+              inputRef={editRef}
             />
-            <textarea
+            <AutocompleteTextarea
               value={editBody}
-              onChange={(e) => setEditBody(e.target.value)}
-              onKeyDown={handleKeyDown}
+              onChange={setEditBody}
+              onCancel={() => setIsEditing(false)}
               placeholder="Details..."
-              className="w-full px-2 py-1 mt-1 bg-base border border-subtle rounded
-                         text-xs text-secondary focus:outline-none focus:border-camel resize-none"
               rows={2}
+              inputMode="textarea"
+              className="mt-1"
             />
           </div>
         ) : (
           <div
-            onClick={() => setIsEditing(true)}
+            onClick={() => {
+              // Inject existing tags as ##tag if not already in content text
+              let content = entry.content || ''
+              const existingInline = (content.match(/##(\w+)/g) || []).map(t => t.slice(2).toLowerCase())
+              const missingTags = (entry.tags || []).filter(t => !existingInline.includes(t.toLowerCase()))
+              if (missingTags.length > 0) {
+                content = content + ' ' + missingTags.map(t => `##${t}`).join(' ')
+              }
+              setEditContent(content)
+              setEditBody(entry.body || '')
+              setIsEditing(true)
+            }}
             className="cursor-text"
           >
             {/* Header/content */}
@@ -527,37 +496,42 @@ function JournalEntryRow({ entry }) {
               <MarkdownPreview content={entry.content} maxLength={300} navigateToRef={navigateToRef} />
             </span>
 
-            {/* Sub-bullets from body */}
+            {/* Sub-bullets from body (collapsible when >2 lines) */}
             {bodyLines.length > 0 && (
-              <ul className="mt-1 space-y-0.5 pl-3">
-                {bodyLines.map((line, i) => (
-                  <li key={i} className="text-xs text-tertiary flex items-start gap-1.5">
-                    <span className="text-muted mt-0.5">–</span>
-                    <span>{line}</span>
-                  </li>
-                ))}
-              </ul>
+              <CollapsibleBody lines={bodyLines} />
             )}
 
-            {/* Person ref chips */}
-            {entry.person_refs?.length > 0 && (
-              <div className="flex gap-1 mt-1">
-                {entry.person_refs.map(person => (
-                  <Link
-                    key={person.id}
-                    to={`/gluon/${person.id}`}
-                    onClick={(e) => e.stopPropagation()}
-                    className="px-1.5 py-0.5 text-xs bg-camel/15 text-camel rounded
-                               hover:bg-camel/25 transition-colors"
-                  >
-                    {person.name}
-                  </Link>
-                ))}
-              </div>
-            )}
           </div>
         )}
       </div>
+
+      {/* Secondary tag badges — right-aligned, matching Library KeywordChip style */}
+      {!isEditing && secondaryTags.length > 0 && (
+        <div className="flex flex-wrap gap-1 flex-shrink-0 items-start mt-0.5">
+          {secondaryTags.map(tag => (
+            tagMap[tag] ? (
+              <Link
+                key={tag}
+                to={`/gluon/${tagMap[tag]}`}
+                onClick={(e) => e.stopPropagation()}
+                className="px-2 py-0.5 rounded text-[10px] font-medium transition-all
+                           bg-camel/10 text-camel/60 border border-camel/15
+                           hover:bg-camel/20 hover:text-camel/80"
+              >
+                {tag}
+              </Link>
+            ) : (
+              <span
+                key={tag}
+                className="px-2 py-0.5 rounded text-[10px] font-medium
+                           bg-camel/10 text-camel/60 border border-camel/15"
+              >
+                {tag}
+              </span>
+            )
+          ))}
+        </div>
+      )}
 
       {/* Action buttons (hover-reveal) */}
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0 mt-0.5">

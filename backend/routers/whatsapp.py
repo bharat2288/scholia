@@ -30,6 +30,8 @@ from services.whatsapp_client import get_whatsapp_client
 from routers.gluons import get_or_create_tag, process_links_in_content
 from routers.journal import match_person_refs
 
+import re
+
 router = APIRouter(prefix="/webhook", tags=["whatsapp"])
 
 
@@ -105,6 +107,78 @@ async def handle_webhook(request: Request):
     return {"status": "ok", "processed": len(messages)}
 
 
+async def _resolve_unclosed_refs(content: str) -> str:
+    """
+    Find unclosed [[ref patterns and resolve them via fuzzy DB match.
+
+    Examples:
+      "Finish [[moom audit today"  → "Finish [[Moom]] audit today"
+      "Read [[Hinton paper"        → "Read [[Hinton, Geoffrey E.]] paper"
+      "Look into [[spaced rep"     → "Look into [[spaced rep]]"  (no match, close as-is)
+    """
+    # Find unclosed [[ patterns: [[ followed by text without a closing ]]
+    # We look for [[ not followed by any ]] before the next [[ or ## or end-of-string
+    pattern = r'\[\[(?![^\[\]]*\]\])([^\[\]#]*)'
+    matches = list(re.finditer(pattern, content))
+    if not matches:
+        return content
+
+    db = await get_db()
+    result = content
+
+    # Process in reverse order so replacements don't shift offsets
+    for match in reversed(matches):
+        raw_text = match.group(1).strip()
+        if not raw_text:
+            continue
+
+        # Progressive matching: try full phrase, then progressively shorter
+        words = raw_text.split()
+        resolved_name = None
+
+        for length in range(len(words), 0, -1):
+            candidate = " ".join(words[:length])
+            cursor = await db.execute(
+                "SELECT content FROM gluons WHERE type = 'note' AND content LIKE ? COLLATE NOCASE LIMIT 1",
+                [f"%{candidate}%"]
+            )
+            row = await cursor.fetchone()
+            if row:
+                resolved_name = row[0]
+                # The remainder after the matched words goes back into the text
+                remainder = " ".join(words[length:])
+                break
+
+        if resolved_name:
+            # Replace [[raw_text with [[ResolvedName]] + remainder
+            replacement = f"[[{resolved_name}]]"
+            if remainder:
+                replacement += " " + remainder
+            result = result[:match.start()] + replacement + result[match.end():]
+        else:
+            # No match at all — close with the first word as the ref
+            if len(words) == 1:
+                result = result[:match.start()] + f"[[{words[0]}]]" + result[match.end():]
+            else:
+                # Take the full phrase
+                result = result[:match.start()] + f"[[{raw_text}]]" + result[match.end():]
+
+    return result
+
+
+def _extract_tag_override(content: str) -> str | None:
+    """
+    If content contains ##tags, return the highest-priority one as category override.
+    Returns None if no ##tags found.
+    """
+    tag_matches = re.findall(r'##(\w+)', content)
+    if not tag_matches:
+        return None
+    tags = [t.lower() for t in tag_matches]
+    priority = ['task', 'idea', 'social', 'admin', 'inbox']
+    return next((t for t in tags if t in priority), tags[0])
+
+
 async def _create_journal_from_classification(
     classification, captured_via: str = "whatsapp"
 ) -> dict:
@@ -119,11 +193,19 @@ async def _create_journal_from_classification(
     details = classification.details
     is_task = classification.is_task
 
+    # Resolve unclosed [[refs via fuzzy DB match
+    content = await _resolve_unclosed_refs(header)
+
+    # Override category from ##tags in content (user-specified tags take priority)
+    tag_override = _extract_tag_override(content)
+    if tag_override:
+        category = tag_override
+        is_task = category == "task"
+
     # Match person refs to existing person gluons
     matched_persons = await match_person_refs(classification.person_refs)
 
-    # Inject [[Person Name]] into content for linking
-    content = header
+    # Inject [[Person Name]] into content for linking (only if not already present)
     for person in matched_persons:
         ref_str = f"[[{person['name']}]]"
         if ref_str not in content:
@@ -152,16 +234,21 @@ async def _create_journal_from_classification(
 
     await db.commit()
 
-    # Process [[refs]] in content first (wipes all links, recreates content-based ones)
+    # Process [[refs]] and ##tags in content (wipes all links, recreates from content)
     await process_links_in_content(entry_id, content)
 
-    # Link to category tag AFTER process_links_in_content (which deletes all links)
+    # Add category tag only if not already linked by process_links_in_content
     tag_id = await get_or_create_tag(category)
-    link_id = str(uuid.uuid4())[:8]
-    await db.execute("""
-        INSERT INTO links (id, source_id, target_id, link_type, created_at)
-        VALUES (?, ?, ?, 'tag', ?)
-    """, [link_id, entry_id, tag_id, now])
+    cursor = await db.execute(
+        "SELECT 1 FROM links WHERE source_id = ? AND target_id = ? AND link_type = 'tag'",
+        [entry_id, tag_id]
+    )
+    if not await cursor.fetchone():
+        link_id = str(uuid.uuid4())[:8]
+        await db.execute("""
+            INSERT INTO links (id, source_id, target_id, link_type, created_at)
+            VALUES (?, ?, ?, 'tag', ?)
+        """, [link_id, entry_id, tag_id, now])
     await db.commit()
 
     print(f"[{captured_via} → Journal] {category}: {header[:60]}")

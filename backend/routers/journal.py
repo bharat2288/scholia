@@ -26,6 +26,8 @@ from pydantic import BaseModel, Field
 from collections import defaultdict
 import uuid
 
+import re
+
 from database import get_db
 from routers.gluons import get_or_create_tag, process_links_in_content
 
@@ -323,17 +325,21 @@ async def create_journal_entry(entry: JournalEntryCreate):
 
     await db.commit()
 
-    # Process [[refs]] and ##tags in content (creates links, but wipes existing ones first)
-    # Must run BEFORE adding category tag — otherwise it deletes the category link
+    # Process [[refs]] and ##tags in content (wipes existing links, recreates from content)
     await process_links_in_content(entry_id, entry.content)
 
-    # Link to category tag AFTER process_links_in_content (which deletes all links)
+    # Add category tag only if not already linked by process_links_in_content
     tag_id = await get_or_create_tag(entry.category)
-    link_id = str(uuid.uuid4())[:8]
-    await db.execute("""
-        INSERT INTO links (id, source_id, target_id, link_type, created_at)
-        VALUES (?, ?, ?, 'tag', ?)
-    """, [link_id, entry_id, tag_id, now])
+    cursor = await db.execute(
+        "SELECT 1 FROM links WHERE source_id = ? AND target_id = ? AND link_type = 'tag'",
+        [entry_id, tag_id]
+    )
+    if not await cursor.fetchone():
+        link_id = str(uuid.uuid4())[:8]
+        await db.execute("""
+            INSERT INTO links (id, source_id, target_id, link_type, created_at)
+            VALUES (?, ?, ?, 'tag', ?)
+        """, [link_id, entry_id, tag_id, now])
     await db.commit()
 
     return {
@@ -405,24 +411,56 @@ async def update_journal_entry(entry_id: str, update: JournalEntryUpdate):
 
     await db.commit()
 
-    # Re-process [[refs]] in content (wipes all links, recreates content-based ones)
+    # Re-process [[refs]] and ##tags in content (wipes all links, recreates from content)
     if update.content:
         await process_links_in_content(entry_id, new_content)
 
-    # Re-add category tag AFTER process_links_in_content (which deletes all links)
-    cat = update.category if update.category else existing_category
+    # Derive category from ##tags in content (or explicit override, or fallback to inbox)
+    if update.category:
+        cat = update.category
+    elif update.content is not None:
+        # Content was edited — derive category entirely from ##tags
+        tag_matches = re.findall(r'##(\w+)', new_content)
+        if tag_matches:
+            tags = [t.lower() for t in tag_matches]
+            priority = ["task", "idea", "social", "admin", "inbox"]
+            cat = next((t for t in tags if t in priority), tags[0])
+        else:
+            cat = "inbox"
+    else:
+        # Only body changed — keep existing category
+        cat = existing_category
     tag_id = await get_or_create_tag(cat)
-    link_id = str(uuid.uuid4())[:8]
-    await db.execute("""
-        INSERT OR IGNORE INTO links (id, source_id, target_id, link_type, created_at)
-        VALUES (?, ?, ?, 'tag', ?)
-    """, [link_id, entry_id, tag_id, now])
+    cursor = await db.execute(
+        "SELECT 1 FROM links WHERE source_id = ? AND target_id = ? AND link_type = 'tag'",
+        [entry_id, tag_id]
+    )
+    if not await cursor.fetchone():
+        link_id = str(uuid.uuid4())[:8]
+        await db.execute("""
+            INSERT INTO links (id, source_id, target_id, link_type, created_at)
+            VALUES (?, ?, ?, 'tag', ?)
+        """, [link_id, entry_id, tag_id, now])
+
+    # Sync completed state when category changes to/from "task"
+    if cat == "task" and existing_category != "task":
+        await db.execute(
+            "UPDATE gluons SET completed = 0 WHERE id = ? AND completed IS NULL",
+            [entry_id]
+        )
+    elif cat != "task" and existing_category == "task":
+        await db.execute(
+            "UPDATE gluons SET completed = NULL WHERE id = ?",
+            [entry_id]
+        )
+
     await db.commit()
 
     return {
         "id": entry_id,
         "content": new_content,
         "body": new_body,
+        "category": cat,
         "updated_at": now,
     }
 

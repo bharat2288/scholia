@@ -10,8 +10,6 @@ import {
   useCreateNote,
   useUpdateNote,
   useDeleteNote,
-  useTags,
-  useGluonSearch,
   useBacklinks,
   useUpdateReadingPosition
 } from '../../hooks/useApi'
@@ -19,6 +17,7 @@ import useReaderStore from '../../stores/useReaderStore'
 import MetadataEditModal from '../common/MetadataEditModal'
 import SimpleChatTab from './SimpleChatTab'
 import { API_BASE } from '../../config'
+import AutocompleteTextarea from '../common/AutocompleteTextarea'
 
 // Global reference to YouTube player for timestamp seeking
 let youtubePlayerRef = null
@@ -1330,276 +1329,20 @@ function BacklinksPanel({ remId }) {
 
 /**
  * Note Editor with autocomplete for [[refs]] and ##tags
+ * Thin wrapper around the shared AutocompleteTextarea component.
  */
 function NoteEditor({ value, onChange, onSubmit, onCancel, placeholder, autoFocus = false, rows = 3 }) {
-  const textareaRef = useRef(null)
-  const [showAutocomplete, setShowAutocomplete] = useState(false)
-
-  // Auto-resize textarea
-  const adjustHeight = useCallback(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
-      textareaRef.current.style.height = `${Math.min(Math.max(textareaRef.current.scrollHeight, 72), 192)}px`
-    }
-  }, [])
-
-  useEffect(() => {
-    adjustHeight()
-  }, [value, adjustHeight])
-  const [autocompleteType, setAutocompleteType] = useState(null) // 'ref' or 'tag'
-  const [autocompleteQuery, setAutocompleteQuery] = useState('')
-  const [autocompletePosition, setAutocompletePosition] = useState({ top: 0, left: 0 })
-  const [selectedIndex, setSelectedIndex] = useState(0)
-
-  // Fetch search results for autocomplete
-  const { data: searchResults = [] } = useGluonSearch(
-    autocompleteType === 'ref' ? autocompleteQuery : null
-  )
-  const { data: allTags = [] } = useTags()
-
-  // Filter tags for autocomplete
-  const filteredTags = useMemo(() => {
-    if (autocompleteType !== 'tag') return []
-    const query = autocompleteQuery.toLowerCase()
-    return allTags.filter(t => t.name.toLowerCase().includes(query)).slice(0, 8)
-  }, [allTags, autocompleteQuery, autocompleteType])
-
-  // Combined suggestions
-  const suggestions = autocompleteType === 'ref' ? searchResults : filteredTags
-
-  // Handle text change and detect autocomplete triggers
-  const handleChange = (e) => {
-    const newValue = e.target.value
-    onChange(newValue)
-
-    // Get cursor position
-    const cursorPos = e.target.selectionStart
-    const textBeforeCursor = newValue.slice(0, cursorPos)
-
-    // Check for [[ trigger
-    const refMatch = textBeforeCursor.match(/\[\[([^\]]*$)/)
-    if (refMatch) {
-      setAutocompleteType('ref')
-      setAutocompleteQuery(refMatch[1])
-      setShowAutocomplete(true)
-      setSelectedIndex(0)
-      updateAutocompletePosition(e.target)
-      return
-    }
-
-    // Check for ## trigger
-    const tagMatch = textBeforeCursor.match(/##(\w*$)/)
-    if (tagMatch) {
-      setAutocompleteType('tag')
-      setAutocompleteQuery(tagMatch[1])
-      setShowAutocomplete(true)
-      setSelectedIndex(0)
-      updateAutocompletePosition(e.target)
-      return
-    }
-
-    // No trigger found
-    setShowAutocomplete(false)
-    setAutocompleteType(null)
-    setAutocompleteQuery('')
-  }
-
-  // Update autocomplete popup position
-  const updateAutocompletePosition = (textarea) => {
-    const rect = textarea.getBoundingClientRect()
-    // Position below the textarea
-    setAutocompletePosition({
-      top: rect.bottom + 4,
-      left: rect.left
-    })
-  }
-
-  // Handle selecting an autocomplete suggestion
-  const selectSuggestion = (suggestion) => {
-    const cursorPos = textareaRef.current.selectionStart
-    const textBeforeCursor = value.slice(0, cursorPos)
-    const textAfterCursor = value.slice(cursorPos)
-
-    let newText, newCursorPos
-
-    if (autocompleteType === 'ref') {
-      // Replace [[query with [[suggestion]]
-      const beforeRef = textBeforeCursor.replace(/\[\[[^\]]*$/, '')
-      const refText = suggestion.content || suggestion.id
-      newText = beforeRef + `[[${refText}]]` + textAfterCursor
-      newCursorPos = beforeRef.length + refText.length + 4
-    } else if (autocompleteType === 'tag') {
-      // Replace ##query with ##tag
-      const beforeTag = textBeforeCursor.replace(/##\w*$/, '')
-      const tagName = suggestion.name
-      newText = beforeTag + `##${tagName}` + textAfterCursor
-      newCursorPos = beforeTag.length + tagName.length + 2
-    }
-
-    onChange(newText)
-    setShowAutocomplete(false)
-    setAutocompleteType(null)
-    setAutocompleteQuery('')
-
-    // Restore focus and cursor position
-    setTimeout(() => {
-      textareaRef.current?.focus()
-      textareaRef.current?.setSelectionRange(newCursorPos, newCursorPos)
-    }, 0)
-  }
-
-  // Create new tag or ref from query text
-  const createFromQuery = () => {
-    if (!autocompleteQuery) return
-
-    const cursorPos = textareaRef.current.selectionStart
-    const textBeforeCursor = value.slice(0, cursorPos)
-    const textAfterCursor = value.slice(cursorPos)
-
-    let newText, newCursorPos
-
-    if (autocompleteType === 'ref') {
-      // Create [[newref]] - will be created as note on save
-      const beforeRef = textBeforeCursor.replace(/\[\[[^\]]*$/, '')
-      newText = beforeRef + `[[${autocompleteQuery}]]` + textAfterCursor
-      newCursorPos = beforeRef.length + autocompleteQuery.length + 4
-    } else if (autocompleteType === 'tag') {
-      // Create ##newtag - will be created on save via get_or_create_tag
-      const beforeTag = textBeforeCursor.replace(/##\w*$/, '')
-      const normalizedTag = autocompleteQuery.toLowerCase()
-      newText = beforeTag + `##${normalizedTag}` + textAfterCursor
-      newCursorPos = beforeTag.length + normalizedTag.length + 2
-    }
-
-    onChange(newText)
-    setShowAutocomplete(false)
-    setAutocompleteType(null)
-    setAutocompleteQuery('')
-
-    setTimeout(() => {
-      textareaRef.current?.focus()
-      textareaRef.current?.setSelectionRange(newCursorPos, newCursorPos)
-    }, 0)
-  }
-
-  // Handle keyboard navigation in autocomplete
-  const handleKeyDown = (e) => {
-    if (showAutocomplete && suggestions.length > 0) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        setSelectedIndex(i => Math.min(i + 1, suggestions.length - 1))
-        return
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        setSelectedIndex(i => Math.max(i - 1, 0))
-        return
-      }
-      if (e.key === 'Enter' || e.key === 'Tab') {
-        e.preventDefault()
-        selectSuggestion(suggestions[selectedIndex])
-        return
-      }
-    }
-
-    // Ctrl+Enter in autocomplete with no matches = create new
-    if (showAutocomplete && suggestions.length === 0 && autocompleteQuery.length > 0) {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault()
-        createFromQuery()
-        return
-      }
-    }
-
-    if (e.key === 'Escape') {
-      if (showAutocomplete) {
-        setShowAutocomplete(false)
-        return
-      }
-      onCancel?.()
-    }
-
-    // Ctrl+Enter outside autocomplete = submit note
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !showAutocomplete) {
-      e.preventDefault()
-      onSubmit?.()
-    }
-  }
-
   return (
-    <div className="relative">
-      <textarea
-        ref={textareaRef}
-        value={value}
-        onChange={handleChange}
-        onKeyDown={handleKeyDown}
-        onBlur={() => setTimeout(() => setShowAutocomplete(false), 150)}
-        placeholder={placeholder}
-        className="w-full px-3 py-2 bg-base border border-subtle rounded-lg text-secondary text-sm resize-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)] focus:outline-none focus:border-camel transition-colors"
-        rows={rows}
-        autoFocus={autoFocus}
-      />
-
-      {/* Autocomplete dropdown */}
-      {showAutocomplete && suggestions.length > 0 && (
-        <div
-          className="fixed z-50 bg-surface border border-subtle rounded-lg shadow-xl max-h-48 overflow-auto"
-          style={{
-            top: autocompletePosition.top,
-            left: autocompletePosition.left,
-            minWidth: '200px',
-            maxWidth: '300px'
-          }}
-        >
-          {suggestions.map((s, i) => (
-            <button
-              key={s.id}
-              onMouseDown={(e) => { e.preventDefault(); selectSuggestion(s) }}
-              className={`
-                w-full px-3 py-2 text-left text-sm transition-colors
-                ${i === selectedIndex ? 'bg-raised text-primary' : 'text-secondary hover:bg-raised/50'}
-              `}
-            >
-              {autocompleteType === 'ref' ? (
-                <span className="truncate block">{s.content}</span>
-              ) : (
-                <span className="flex items-center gap-2">
-                  <span className="text-pink-400">##</span>
-                  <span>{s.name}</span>
-                  <span className="text-muted text-xs ml-auto">({s.usage_count})</span>
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Show create option when no matches */}
-      {showAutocomplete && suggestions.length === 0 && autocompleteQuery.length > 0 && (
-        <div
-          className="fixed z-50 bg-surface border border-subtle rounded-lg shadow-xl overflow-hidden"
-          style={{
-            top: autocompletePosition.top,
-            left: autocompletePosition.left,
-            minWidth: '200px'
-          }}
-        >
-          <button
-            onMouseDown={(e) => { e.preventDefault(); createFromQuery() }}
-            className="w-full px-3 py-2 text-left text-sm bg-raised hover:bg-elevated transition-colors flex items-center justify-between gap-2"
-          >
-            <span>
-              {autocompleteType === 'ref' ? (
-                <span className="text-blue-400">Create [[{autocompleteQuery}]]</span>
-              ) : (
-                <span className="text-pink-400">Create ##{autocompleteQuery.toLowerCase()}</span>
-              )}
-            </span>
-            <span className="text-xs text-muted">Ctrl+Enter</span>
-          </button>
-        </div>
-      )}
-    </div>
+    <AutocompleteTextarea
+      value={value}
+      onChange={onChange}
+      onSubmit={onSubmit}
+      onCancel={onCancel}
+      placeholder={placeholder}
+      autoFocus={autoFocus}
+      rows={rows}
+      inputMode="textarea"
+    />
   )
 }
 
