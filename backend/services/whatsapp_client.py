@@ -75,6 +75,73 @@ class WhatsAppClient:
                     "message": str(e)
                 }
 
+    async def send_interactive_buttons(self, to: str, body_text: str, buttons: list) -> dict:
+        """
+        Send an interactive message with reply buttons.
+
+        Args:
+            to: Recipient phone number
+            body_text: Message body text
+            buttons: List of button dicts with 'id' and 'title' keys
+                    Max 3 buttons, titles max 20 chars
+
+        Returns:
+            API response dict
+        """
+        if not self.is_configured:
+            return {"error": True, "message": "WhatsApp not configured"}
+
+        url = f"{GRAPH_API_BASE}/{self.phone_number_id}/messages"
+
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Content-Type": "application/json"
+        }
+
+        # Format buttons for WhatsApp API
+        formatted_buttons = []
+        for btn in buttons[:3]:  # Max 3 buttons
+            formatted_buttons.append({
+                "type": "reply",
+                "reply": {
+                    "id": btn["id"],
+                    "title": btn["title"][:20]  # Max 20 chars
+                }
+            })
+
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to,
+            "type": "interactive",
+            "interactive": {
+                "type": "button",
+                "body": {
+                    "text": body_text
+                },
+                "action": {
+                    "buttons": formatted_buttons
+                }
+            }
+        }
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as e:
+                return {
+                    "error": True,
+                    "status_code": e.response.status_code,
+                    "message": e.response.text
+                }
+            except Exception as e:
+                return {
+                    "error": True,
+                    "message": str(e)
+                }
+
     async def send_confirmation(self, to: str, category: str, original_text: str) -> dict:
         """
         Send a confirmation message after processing a capture.

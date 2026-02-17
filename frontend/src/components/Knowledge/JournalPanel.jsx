@@ -327,20 +327,88 @@ function CategorySection({ category, tagId, entries, tagMap }) {
 
 const COLLAPSE_THRESHOLD = 2
 
-function CollapsibleBody({ lines }) {
+/**
+ * Parse body text into sub-tasks, regular lines, and completion comments.
+ *
+ * Sub-tasks: lines starting with [ ] or [x]
+ * Regular lines: any other non-empty lines before the --- separator
+ * Completion comments: lines after the --- separator
+ *
+ * @returns {object} { subTasks: [{text, completed}], otherLines: [string], completionComments: [string] }
+ */
+function parseBodyContent(body) {
+  if (!body) return { subTasks: [], otherLines: [], completionComments: [] }
+
+  const lines = body.split('\n')
+  const subTasks = []
+  const otherLines = []
+  const completionComments = []
+  let reachedSeparator = false
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+
+    if (trimmed === '---') {
+      reachedSeparator = true
+      continue
+    }
+
+    if (reachedSeparator) {
+      if (trimmed) completionComments.push(trimmed)
+    } else if (trimmed.startsWith('[ ]')) {
+      subTasks.push({ text: trimmed.slice(3).trim(), completed: false })
+    } else if (trimmed.startsWith('[x]')) {
+      subTasks.push({ text: trimmed.slice(3).trim(), completed: true })
+    } else if (trimmed) {
+      otherLines.push(trimmed)
+    }
+  }
+
+  return { subTasks, otherLines, completionComments }
+}
+
+function CollapsibleBody({ lines, subTasks, onToggleSubTask }) {
   const [expanded, setExpanded] = useState(false)
-  const canCollapse = lines.length > COLLAPSE_THRESHOLD
-  const visibleLines = canCollapse && !expanded ? lines.slice(0, COLLAPSE_THRESHOLD) : lines
-  const hiddenCount = lines.length - COLLAPSE_THRESHOLD
+  const totalItems = subTasks.length + lines.length
+  const canCollapse = totalItems > COLLAPSE_THRESHOLD
+
+  // Calculate how many of each type to show when collapsed
+  const visibleSubTasks = canCollapse && !expanded
+    ? subTasks.slice(0, Math.min(COLLAPSE_THRESHOLD, subTasks.length))
+    : subTasks
+  const remainingSlots = canCollapse && !expanded
+    ? Math.max(0, COLLAPSE_THRESHOLD - visibleSubTasks.length)
+    : lines.length
+  const visibleLines = lines.slice(0, remainingSlots)
+
+  const hiddenCount = totalItems - (visibleSubTasks.length + visibleLines.length)
 
   return (
     <ul className="mt-1 space-y-0.5 pl-3">
+      {/* Sub-task checkboxes */}
+      {visibleSubTasks.map((st, i) => (
+        <li key={`subtask-${i}`} className="text-xs text-tertiary flex items-start gap-1.5">
+          <input
+            type="checkbox"
+            checked={st.completed}
+            onChange={(e) => {
+              e.stopPropagation()
+              onToggleSubTask(i)
+            }}
+            className="mt-0.5 w-3 h-3 rounded border border-muted cursor-pointer hover:border-camel transition-colors"
+          />
+          <span className={st.completed ? 'line-through text-muted' : ''}>{st.text}</span>
+        </li>
+      ))}
+
+      {/* Regular lines */}
       {visibleLines.map((line, i) => (
-        <li key={i} className="text-xs text-tertiary flex items-start gap-1.5">
+        <li key={`line-${i}`} className="text-xs text-tertiary flex items-start gap-1.5">
           <span className="text-muted mt-0.5">–</span>
           <span>{line}</span>
         </li>
       ))}
+
       {canCollapse && (
         <li className="text-xs">
           <button
@@ -367,15 +435,22 @@ function JournalEntryRow({ entry, primaryCategory, tagMap = {} }) {
   const toggleComplete = useToggleJournalComplete()
   const deleteEntry = useDeleteJournalEntry()
   const updateEntry = useUpdateJournalEntry()
+  const queryClient = useQueryClient()
 
   const [isEditing, setIsEditing] = useState(false)
   const [editContent, setEditContent] = useState('')
   const [editBody, setEditBody] = useState('')
+  const [showCompletionInput, setShowCompletionInput] = useState(false)
+  const [completionNote, setCompletionNote] = useState('')
   const editRef = useRef(null)
   const editContainerRef = useRef(null)
 
   const isTask = entry.completed !== null && entry.completed !== undefined
   const isCompleted = entry.completed === 1
+
+  // Parse body content
+  const { subTasks, otherLines, completionComments } = parseBodyContent(entry.body)
+  const completedSubTasks = subTasks.filter(st => st.completed).length
 
   // Focus input when entering edit mode
   useEffect(() => {
@@ -387,7 +462,67 @@ function JournalEntryRow({ entry, primaryCategory, tagMap = {} }) {
 
   const handleCheckbox = (e) => {
     e.stopPropagation()
-    toggleComplete.mutate({ id: entry.id, completed: !isCompleted })
+
+    if (!isCompleted && isTask) {
+      // About to mark complete — show completion note input
+      setShowCompletionInput(true)
+    } else {
+      // Unchecking — just toggle
+      toggleComplete.mutate({ id: entry.id, completed: !isCompleted })
+    }
+  }
+
+  const handleSaveCompletion = async () => {
+    // Append completion comment to body with separator if note provided
+    const timestamp = new Date().toISOString().split('T')[0]
+    const separator = '\n\n---\n'
+    const comment = completionNote.trim()
+      ? `Completed ${timestamp}: ${completionNote.trim()}`
+      : `Completed ${timestamp}`
+    const newBody = (entry.body || '') + separator + comment
+
+    try {
+      await updateEntry.mutateAsync({
+        id: entry.id,
+        body: newBody
+      })
+      await toggleComplete.mutateAsync({ id: entry.id, completed: true })
+      await queryClient.refetchQueries({ queryKey: ['journal'] })
+
+      setShowCompletionInput(false)
+      setCompletionNote('')
+    } catch (err) {
+      console.error('Failed to save completion:', err)
+    }
+  }
+
+  const handleToggleSubTask = async (index) => {
+    // Toggle the sub-task at the given index
+    const updatedSubTasks = [...subTasks]
+    updatedSubTasks[index].completed = !updatedSubTasks[index].completed
+
+    // Reconstruct body with updated sub-tasks
+    const subTaskLines = updatedSubTasks.map(st =>
+      `[${st.completed ? 'x' : ' '}] ${st.text}`
+    )
+    const bodyParts = [...subTaskLines, ...otherLines]
+
+    // Preserve completion comments if they exist
+    if (completionComments.length > 0) {
+      bodyParts.push('', '---', ...completionComments)
+    }
+
+    const newBody = bodyParts.join('\n')
+
+    try {
+      await updateEntry.mutateAsync({
+        id: entry.id,
+        body: newBody
+      })
+      await queryClient.refetchQueries({ queryKey: ['journal'] })
+    } catch (err) {
+      console.error('Failed to toggle sub-task:', err)
+    }
   }
 
   const handleSave = () => {
@@ -411,11 +546,6 @@ function JournalEntryRow({ entry, primaryCategory, tagMap = {} }) {
 
   // Tags other than the primary grouping category
   const secondaryTags = entry.tags?.filter(t => t !== primaryCategory) || []
-
-  // Parse body into sub-bullets
-  const bodyLines = entry.body
-    ? entry.body.split('\n').filter(l => l.trim())
-    : []
 
   return (
     <div className="group flex items-start gap-2 py-1.5 px-2 -mx-2 rounded-lg hover:bg-surface transition-colors">
@@ -489,16 +619,82 @@ function JournalEntryRow({ entry, primaryCategory, tagMap = {} }) {
             }}
             className="cursor-text"
           >
-            {/* Header/content */}
-            <span className={`text-sm ${
-              isCompleted ? 'line-through text-muted' : 'text-secondary'
-            }`}>
-              <MarkdownPreview content={entry.content} maxLength={300} navigateToRef={navigateToRef} />
-            </span>
+            {/* Header/content with progress badge */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-sm ${
+                isCompleted ? 'line-through text-muted' : 'text-secondary'
+              }`}>
+                <MarkdownPreview content={entry.content} maxLength={300} navigateToRef={navigateToRef} />
+              </span>
 
-            {/* Sub-bullets from body (collapsible when >2 lines) */}
-            {bodyLines.length > 0 && (
-              <CollapsibleBody lines={bodyLines} />
+              {/* Sub-task progress badge */}
+              {isTask && subTasks.length > 0 && (
+                <span className="px-1.5 py-0.5 text-[10px] font-medium rounded
+                               bg-camel/10 text-camel/60 border border-camel/15">
+                  {completedSubTasks}/{subTasks.length}
+                </span>
+              )}
+            </div>
+
+            {/* Sub-tasks and regular lines (collapsible when >2 total items) */}
+            {(subTasks.length > 0 || otherLines.length > 0) && (
+              <CollapsibleBody
+                lines={otherLines}
+                subTasks={subTasks}
+                onToggleSubTask={handleToggleSubTask}
+              />
+            )}
+
+            {/* Completion comments (always visible when present) */}
+            {completionComments.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-subtle">
+                {completionComments.map((comment, i) => (
+                  <p key={i} className="text-xs text-muted italic">
+                    {comment}
+                  </p>
+                ))}
+              </div>
+            )}
+
+            {/* Completion note input (shown when marking task complete) */}
+            {showCompletionInput && (
+              <div className="mt-2 pt-2 border-t border-subtle" onClick={(e) => e.stopPropagation()}>
+                <input
+                  type="text"
+                  value={completionNote}
+                  onChange={(e) => setCompletionNote(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handleSaveCompletion()
+                    } else if (e.key === 'Escape') {
+                      setShowCompletionInput(false)
+                      setCompletionNote('')
+                    }
+                  }}
+                  placeholder="Add completion note (optional)..."
+                  autoFocus
+                  className="w-full px-2 py-1 text-xs bg-base border border-subtle rounded
+                             focus:outline-none focus:border-camel transition-colors"
+                />
+                <div className="flex gap-2 mt-1">
+                  <button
+                    onClick={handleSaveCompletion}
+                    className="px-2 py-1 text-xs font-medium bg-camel text-base rounded
+                               hover:bg-camel/90 transition-colors"
+                  >
+                    Complete
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowCompletionInput(false)
+                      setCompletionNote('')
+                    }}
+                    className="px-2 py-1 text-xs text-muted hover:text-secondary transition-colors"
+                  >
+                    Skip
+                  </button>
+                </div>
+              </div>
             )}
 
           </div>
