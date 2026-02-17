@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5176,
+    allowedHosts: ['scholia.project2976.xyz'],
     proxy: {
       // Proxy API requests to backend during development
       '/api': {
