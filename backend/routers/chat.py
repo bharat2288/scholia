@@ -73,6 +73,7 @@ class ModelInfo(BaseModel):
     available: bool
     default: bool
     pricing: dict
+    tier_hints: list[str] = []
 
 
 class ConversationSummary(BaseModel):

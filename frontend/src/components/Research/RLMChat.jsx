@@ -5,8 +5,9 @@ import useReaderStore from '../../stores/useReaderStore'
 import useResearchStore from '../../stores/useResearchStore'
 import ToolCallFeed from './ToolCallFeed'
 import CodeBlockFeed from './CodeBlockFeed'
+import EvidenceTrace from './EvidenceTrace'
 import { MarkdownContent } from '../../utils/markdown'
-import { formatCost } from '../../hooks/useChat'
+import { formatCost, useChatModels } from '../../hooks/useChat'
 
 /**
  * RLMChat
@@ -28,7 +29,8 @@ export default function RLMChat({ sessionId }) {
   const v2Stream = useRLMV2Stream()
 
   const { fontSize, setFontSize } = useReaderStore()
-  const { maxTokens, setMaxTokens, rlmMode, setRlmMode } = useResearchStore()
+  const { maxTokens, setMaxTokens, rlmMode, setRlmMode, rlmModels, setRlmModel } = useResearchStore()
+  const { data: chatModels = [] } = useChatModels()
 
   // Determine active stream based on mode
   const isV2 = rlmMode === 'code'
@@ -55,6 +57,9 @@ export default function RLMChat({ sessionId }) {
       v2Stream.startStream({
         sessionId,
         query: input.trim(),
+        orchestratorModel: rlmModels.orchestrator,
+        subModel: rlmModels.sub,
+        synthesisModel: rlmModels.synthesis,
         maxTokens,
       })
     } else {
@@ -80,7 +85,8 @@ export default function RLMChat({ sessionId }) {
       <div className="flex-1 overflow-y-auto">
         {/* Controls bar */}
         <div className="sticky top-0 z-10 bg-base/95 backdrop-blur-sm border-b border-subtle/30">
-          <div className="max-w-3xl mx-auto px-6 py-2 flex items-center justify-end gap-6">
+          {/* Row 1: mode, tokens, font size */}
+          <div className="max-w-3xl mx-auto px-6 pt-2 pb-1.5 flex items-center justify-end gap-6">
             {/* Mode selector */}
             <div className="flex items-center gap-2 text-muted">
               <select
@@ -125,6 +131,17 @@ export default function RLMChat({ sessionId }) {
               <span className="text-xs w-6">{fontSize}</span>
             </div>
           </div>
+          {/* Row 2: RLM model selectors — only in code mode */}
+          {isV2 && (
+            <div className="max-w-3xl mx-auto px-6 pb-2 flex items-center justify-end">
+              <RLMModelSelectors
+                models={chatModels}
+                rlmModels={rlmModels}
+                setRlmModel={setRlmModel}
+                disabled={isStreaming}
+              />
+            </div>
+          )}
         </div>
 
         <div className="max-w-3xl mx-auto px-6 py-4 space-y-4">
@@ -269,6 +286,10 @@ function buildResultMessage(result, isV2) {
         sub_llm_cost: result.usage?.sub_llm?.cost_usd,
         synthesis_cost: result.usage?.synthesis?.cost_usd,
         synthesis_model: result.usage?.synthesis?.model,
+        raw_findings: result.raw_findings,
+        stored_evidence: result.stored_evidence,
+        doc_reads: result.doc_reads,
+        codeBlocks: result.codeBlocks,
       }
     }
   }
@@ -315,6 +336,55 @@ function SuggestedQuery({ text }) {
   return (
     <div className="px-4 py-2 text-sm text-tertiary bg-surface/50 rounded-lg border border-subtle/30 hover:border-camel/30 hover:text-secondary cursor-pointer transition-colors">
       "{text}"
+    </div>
+  )
+}
+
+/**
+ * RLMModelSelectors
+ * =================
+ * Three compact dropdowns for orchestrator / sub / synthesis model tiers.
+ * Filters available models by tier_hints from the API.
+ */
+function RLMModelSelectors({ models, rlmModels, setRlmModel, disabled }) {
+  const selectClass = "text-xs bg-surface border border-subtle/50 rounded px-1.5 py-1 text-secondary focus:outline-none focus:border-camel/50 disabled:opacity-50"
+
+  // Format pricing for option label: "$0.15/$0.60"
+  const priceLabel = (m) => {
+    const i = m.pricing?.input ?? 0
+    const o = m.pricing?.output ?? 0
+    return `$${i < 1 ? i.toFixed(2) : i}/${o < 1 ? o.toFixed(2) : o}`
+  }
+
+  const tiers = [
+    { key: 'orchestrator', label: 'ORCH', hint: 'orchestrator', title: 'Orchestrator: writes code to explore documents' },
+    { key: 'sub', label: 'SUB', hint: 'sub', title: 'Sub-LLM: cheap reasoning on passages' },
+    { key: 'synthesis', label: 'SYNTH', hint: 'synthesis', title: 'Synthesis: polished final answer' },
+  ]
+
+  return (
+    <div className="flex items-center flex-wrap gap-x-3 gap-y-1">
+      {tiers.map(({ key, label, hint, title }) => {
+        const filtered = models.filter(m => m.available && m.tier_hints?.includes(hint))
+        return (
+          <div key={key} className="flex items-center gap-1 text-muted">
+            <span className="text-[10px] font-semibold tracking-wider opacity-50">{label}</span>
+            <select
+              value={rlmModels[key]}
+              onChange={(e) => setRlmModel(key, e.target.value)}
+              disabled={disabled}
+              className={selectClass}
+              title={title}
+            >
+              {filtered.map(m => (
+                <option key={m.id} value={m.id}>
+                  {m.name} ({priceLabel(m)})
+                </option>
+              ))}
+            </select>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -401,7 +471,7 @@ function MessageBubble({ message, fontSize = 16, isNew = false, onSaveAsNote, is
             {message.context_snapshot.synthesis_model && (
               <>
                 <span className="text-muted/50">/</span>
-                <span className="text-purple-400">Opus synthesis</span>
+                <span className="text-purple-400">{message.context_snapshot.synthesis_model} synthesis</span>
               </>
             )}
             {costUsd > 0 && (
@@ -424,6 +494,17 @@ function MessageBubble({ message, fontSize = 16, isNew = false, onSaveAsNote, is
             <MarkdownContent content={message.content} inheritFontSize />
           )}
         </div>
+
+        {/* Evidence Trace for RLM-v2 messages */}
+        {isRLMV2 && message.context_snapshot?.raw_findings && (
+          <EvidenceTrace
+            rawFindings={message.context_snapshot.raw_findings}
+            storedEvidence={message.context_snapshot.stored_evidence}
+            docReads={message.context_snapshot.doc_reads}
+            iterations={message.context_snapshot.iterations}
+            codeBlocks={message.context_snapshot.codeBlocks}
+          />
+        )}
 
         {/* Actions for assistant messages */}
         {!isUser && message.id && (
@@ -485,7 +566,7 @@ function StreamingStateV2({ codeBlocks, currentIteration, isSynthesizing, synthe
           </svg>
           {isSynthesizing ? (
             <span className="text-purple-400">
-              Synthesizing with Opus...
+              Synthesizing with {synthesisModel || 'Opus'}...
             </span>
           ) : (
             <span>

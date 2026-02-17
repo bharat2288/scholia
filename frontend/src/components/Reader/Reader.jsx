@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useResizable, ResizeHandle } from '../../hooks/useResizable'
+import useDeviceLayout from '../../hooks/useDeviceLayout'
+import Drawer from '../common/Drawer'
 import {
   useSourceContent,
   useHighlights,
@@ -188,6 +190,11 @@ export default function Reader() {
   const [isChatExpanded, setIsChatExpanded] = useState(false)
   const saveTimeoutRef = useRef(null)
   const scrollSpyRef = useRef(false) // true when scroll spy triggered the section change
+
+  // Mobile layout
+  const layout = useDeviceLayout()
+  const [tocDrawerOpen, setTocDrawerOpen] = useState(false)
+  const [sidebarDrawerOpen, setSidebarDrawerOpen] = useState(false)
 
   // Resizable pane widths
   const { tocWidth, sidebarWidth, handleTocResize, handleSidebarResize, isResizing } = useResizable()
@@ -383,6 +390,45 @@ export default function Reader() {
   }, [])
 
   /**
+   * Handle touch selection — 100ms delay to let browser finalize selection.
+   * Clamps popup position to viewport bounds for mobile.
+   */
+  const handleTouchEnd = useCallback(() => {
+    setTimeout(() => {
+      const sel = window.getSelection()
+      if (!sel || sel.isCollapsed) return
+
+      const selectedText = sel.toString().trim()
+      if (selectedText.length < 3) return
+
+      const range = sel.getRangeAt(0)
+      const startOffset = getOffsetFromNode(range.startContainer, range.startOffset)
+      const endOffset = getOffsetFromNode(range.endContainer, range.endOffset)
+
+      if (startOffset === null || endOffset === null) return
+
+      const rect = range.getBoundingClientRect()
+      const vw = window.innerWidth
+
+      setSelection({
+        text: selectedText,
+        startOffset: Math.min(startOffset, endOffset),
+        endOffset: Math.max(startOffset, endOffset)
+      })
+
+      // Position above selection on mobile so it doesn't get clipped by keyboard/bottom
+      const popupHeight = 48
+      const above = rect.top - popupHeight - 8
+      const below = rect.bottom + 8
+
+      setPopupPosition({
+        top: above > 10 ? above : Math.min(below, window.innerHeight - 60),
+        left: Math.max(30, Math.min(rect.left + rect.width / 2, vw - 30))
+      })
+    }, 100)
+  }, [])
+
+  /**
    * Get character offset from a DOM node and text offset
    * Walks up to find the nearest element with data-offset
    */
@@ -483,6 +529,24 @@ export default function Reader() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [popupPosition])
 
+  // Suppress native context menu in reading pane on mobile/tablet
+  // so the Scholia highlight popup is the only selection UI
+  useEffect(() => {
+    if (layout === 'desktop' || !contentRef.current) return
+
+    const suppress = (e) => {
+      // Only suppress when there's a text selection (let normal taps through)
+      const sel = window.getSelection()
+      if (sel && !sel.isCollapsed) {
+        e.preventDefault()
+      }
+    }
+
+    const el = contentRef.current
+    el.addEventListener('contextmenu', suppress)
+    return () => el.removeEventListener('contextmenu', suppress)
+  }, [layout])
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-base flex items-center justify-center">
@@ -502,15 +566,298 @@ export default function Reader() {
     )
   }
 
+  // -- Shared sub-elements used by all layouts --
+
+  // Desktop: floating popup near selection
+  const highlightPopup = popupPosition && selection && (
+    <div
+      className="highlight-popup fixed z-50 bg-surface border border-subtle rounded-lg shadow-2xl p-1.5 flex items-center gap-1"
+      style={{
+        top: popupPosition.top,
+        left: popupPosition.left,
+        transform: 'translateX(-50%)',
+        boxShadow: '0 4px 20px rgba(0,0,0,0.5)'
+      }}
+    >
+      <button
+        onClick={() => handleCreateHighlight(DEFAULT_HIGHLIGHT_COLOR)}
+        className="px-3 py-1.5 rounded-md text-xs font-medium bg-raised hover:bg-elevated text-secondary hover:text-primary transition-all border border-transparent hover:border-camel/30"
+        title="Quick highlight (Yellow)"
+      >
+        Highlight
+      </button>
+      <div className="w-px h-6 bg-raised mx-0.5" />
+      {Object.entries(HIGHLIGHT_COLORS).map(([color, info]) => (
+        <button
+          key={color}
+          onClick={() => handleCreateHighlight(color)}
+          className={`w-6 h-6 rounded-full transition-all hover:scale-125 ${color === DEFAULT_HIGHLIGHT_COLOR ? 'ring-2 ring-offset-1 ring-offset-surface ring-camel/50' : ''}`}
+          style={{ backgroundColor: info.border }}
+          title={`${info.name} - ${info.meaning}`}
+        />
+      ))}
+      <div className="w-px h-6 bg-raised mx-0.5" />
+      <button
+        onClick={() => {
+          navigator.clipboard.writeText(selection.text)
+          setSelection(null)
+          setPopupPosition(null)
+          window.getSelection()?.removeAllRanges()
+        }}
+        className="w-7 h-7 rounded-md flex items-center justify-center bg-raised hover:bg-elevated text-muted hover:text-primary transition-all"
+        title="Copy text"
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+        </svg>
+      </button>
+    </div>
+  )
+
+  // Mobile/Tablet: fixed bottom highlight bar that coexists with native selection UI
+  const mobileHighlightBar = selection && (
+    <div className="fixed bottom-0 left-0 right-0 z-50 bg-surface border-t border-subtle shadow-[0_-4px_20px_rgba(0,0,0,0.5)] safe-area-bottom animate-slide-up">
+      {/* Selected text preview */}
+      <div className="px-4 pt-3 pb-1">
+        <p className="text-xs text-muted truncate">
+          "{selection.text.slice(0, 80)}{selection.text.length > 80 ? '...' : ''}"
+        </p>
+      </div>
+      {/* Action buttons */}
+      <div className="px-4 pb-3 pt-1 flex items-center gap-3">
+        {/* Color circles */}
+        {Object.entries(HIGHLIGHT_COLORS).map(([color, info]) => (
+          <button
+            key={color}
+            onClick={() => handleCreateHighlight(color)}
+            className={`w-10 h-10 rounded-full transition-all active:scale-90 ${
+              color === DEFAULT_HIGHLIGHT_COLOR
+                ? 'ring-2 ring-offset-2 ring-offset-surface ring-camel/50'
+                : ''
+            }`}
+            style={{ backgroundColor: info.border }}
+            aria-label={`${info.name} - ${info.meaning}`}
+          />
+        ))}
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Copy button */}
+        <button
+          onClick={() => {
+            navigator.clipboard.writeText(selection.text)
+            setSelection(null)
+            setPopupPosition(null)
+            window.getSelection()?.removeAllRanges()
+          }}
+          className="w-10 h-10 rounded-lg flex items-center justify-center bg-raised text-secondary active:bg-elevated transition-all"
+          aria-label="Copy text"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+        </button>
+
+        {/* Dismiss */}
+        <button
+          onClick={() => {
+            setSelection(null)
+            setPopupPosition(null)
+            window.getSelection()?.removeAllRanges()
+          }}
+          className="w-10 h-10 rounded-lg flex items-center justify-center bg-raised text-muted active:bg-elevated transition-all"
+          aria-label="Dismiss"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  )
+
+  const documentBody = (
+    <>
+      <header className="mb-8 pb-6 border-b border-subtle">
+        <h1 className={`font-display text-primary mb-1 ${layout === 'mobile' ? 'text-2xl' : 'text-4xl'}`}>{data?.title}</h1>
+        <SquiggleSVG className="mb-2" />
+        {data?.author && (
+          <p className="text-secondary">
+            {data.author}{data.year && ` (${data.year})`}
+          </p>
+        )}
+      </header>
+
+      {data?.source_type === 'media' && data?.video_id && (
+        <YouTubePlayer videoId={data.video_id} title={data.title} />
+      )}
+
+      <ReadingContent
+        content={data?.content || ''}
+        sections={data?.sections || []}
+        figures={figures}
+        highlights={highlights}
+        sourceId={id}
+      />
+    </>
+  )
+
+  const sidebarProps = {
+    sourceId: id,
+    documentData: data,
+    highlights,
+    onHighlightClick: scrollToHighlight,
+    onHighlightDelete: handleDeleteHighlight,
+    content: data?.content || '',
+    selection,
+    isChatExpanded,
+    setIsChatExpanded,
+    initialConversationId
+  }
+
+  const tocProps = {
+    sections: data?.sections || [],
+    currentSectionId,
+    onSectionClick: (sectionId) => {
+      setCurrentSection(sectionId)
+      if (layout === 'mobile') setTocDrawerOpen(false)
+    }
+  }
+
+  // =============================================
+  // MOBILE LAYOUT: single pane + drawers
+  // =============================================
+  if (layout === 'mobile') {
+    return (
+      <div className="h-screen bg-base flex flex-col">
+        {/* Compact sticky header with safe area top for notch/status bar */}
+        <div className="sticky top-0 z-30 bg-base/95 backdrop-blur-sm border-b border-subtle/50 px-4 py-2 flex items-center justify-between gap-2 safe-area-top">
+          {/* Hamburger → ToC drawer */}
+          <button
+            onClick={() => setTocDrawerOpen(true)}
+            className="p-2 text-secondary hover:text-primary transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
+            title="Table of Contents"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+
+          {/* Truncated title */}
+          <Link to="/" className="flex-1 min-w-0">
+            <span className="text-sm text-secondary truncate block">{data?.title}</span>
+          </Link>
+
+          {/* Sidebar button → bottom sheet */}
+          <button
+            onClick={() => setSidebarDrawerOpen(true)}
+            className="p-2 text-secondary hover:text-primary transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
+            title="Annotations & Chat"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Full-screen content pane */}
+        <main
+          ref={contentRef}
+          className="flex-1 overflow-auto relative"
+          onMouseUp={handleMouseUp}
+          onTouchEnd={handleTouchEnd}
+        >
+          <div className="max-w-3xl mx-auto px-4 py-6">
+            {documentBody}
+          </div>
+        </main>
+
+        {/* Bottom highlight bar — coexists with native selection UI */}
+        {mobileHighlightBar}
+
+        {/* ToC drawer (left) */}
+        <Drawer isOpen={tocDrawerOpen} onClose={() => setTocDrawerOpen(false)} position="left">
+          <TocPane {...tocProps} />
+        </Drawer>
+
+        {/* Sidebar drawer (bottom sheet) */}
+        <Drawer isOpen={sidebarDrawerOpen} onClose={() => setSidebarDrawerOpen(false)} position="bottom">
+          <ReaderSidebar {...sidebarProps} />
+        </Drawer>
+      </div>
+    )
+  }
+
+  // =============================================
+  // TABLET LAYOUT: two-pane (content 70% + sidebar 30%)
+  // =============================================
+  if (layout === 'tablet') {
+    return (
+      <div className="h-screen bg-base flex">
+        {/* Content pane — 70% */}
+        <main
+          ref={contentRef}
+          className="flex-[7] h-full overflow-auto relative"
+          onMouseUp={handleMouseUp}
+          onTouchEnd={handleTouchEnd}
+        >
+          {/* Sticky nav with ToC hamburger */}
+          <div className="sticky top-0 z-10 bg-base/95 backdrop-blur-sm border-b border-subtle/50">
+            <div className="max-w-3xl mx-auto px-6 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setTocDrawerOpen(true)}
+                  className="p-1.5 text-muted hover:text-secondary transition-colors"
+                  title="Table of Contents"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                </button>
+                <Link to="/" className="text-muted hover:text-secondary text-sm flex items-center gap-1 transition-colors">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  Library
+                </Link>
+              </div>
+              <div className="flex items-center gap-4">
+                <FontSizeSlider />
+                <span className="text-xs text-muted truncate max-w-[200px]">{data?.title}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="max-w-3xl mx-auto px-6 py-8">
+            {documentBody}
+          </div>
+        </main>
+
+        {/* Bottom highlight bar for tablet touch */}
+        {mobileHighlightBar}
+
+        {/* Sidebar pane — 30%, always visible */}
+        <div className="flex-[3] h-full border-l border-subtle">
+          <ReaderSidebar {...sidebarProps} />
+        </div>
+
+        {/* ToC drawer (left) */}
+        <Drawer isOpen={tocDrawerOpen} onClose={() => setTocDrawerOpen(false)} position="left">
+          <TocPane {...tocProps} />
+        </Drawer>
+      </div>
+    )
+  }
+
+  // =============================================
+  // DESKTOP LAYOUT: unchanged three-pane
+  // =============================================
   return (
     <div className={`h-screen bg-base flex ${isResizing ? 'select-none' : ''}`}>
       {/* ToC Pane - always visible */}
       <div style={{ width: tocWidth }} className="flex-shrink-0 h-full">
-        <TocPane
-          sections={data?.sections || []}
-          currentSectionId={currentSectionId}
-          onSectionClick={setCurrentSection}
-        />
+        <TocPane {...tocProps} />
       </div>
 
       {/* Resize Handle: ToC ↔ Content - hidden when chat expanded */}
@@ -543,89 +890,10 @@ export default function Reader() {
               </div>
 
               <div className="max-w-3xl mx-auto px-8 py-8">
-                {/* Document Header */}
-                <header className="mb-8 pb-6 border-b border-subtle">
-                  <h1 className="font-display text-4xl text-primary mb-1">{data?.title}</h1>
-                  <SquiggleSVG className="mb-2" />
-                  {data?.author && (
-                    <p className="text-secondary">
-                      {data.author}{data.year && ` (${data.year})`}
-                    </p>
-                  )}
-                </header>
-
-                {/* Embedded YouTube player for video sources */}
-                {data?.source_type === 'media' && data?.video_id && (
-                  <YouTubePlayer
-                    videoId={data.video_id}
-                    title={data.title}
-                  />
-                )}
-
-                {/* Content */}
-                <ReadingContent
-                  content={data?.content || ''}
-                  sections={data?.sections || []}
-                  figures={figures}
-                  highlights={highlights}
-                  sourceId={id}
-                />
+                {documentBody}
               </div>
 
-              {/* Highlight Color Popup */}
-              {popupPosition && selection && (
-                <div
-                  className="highlight-popup fixed z-50 bg-surface border border-subtle rounded-lg shadow-2xl p-1.5 flex items-center gap-1"
-                  style={{
-                    top: popupPosition.top,
-                    left: popupPosition.left,
-                    transform: 'translateX(-50%)',
-                    boxShadow: '0 4px 20px rgba(0,0,0,0.5)'
-                  }}
-                >
-                  {/* Quick highlight with default color */}
-                  <button
-                    onClick={() => handleCreateHighlight(DEFAULT_HIGHLIGHT_COLOR)}
-                    className="px-3 py-1.5 rounded-md text-xs font-medium bg-raised hover:bg-elevated text-secondary hover:text-primary transition-all border border-transparent hover:border-camel/30"
-                    title="Quick highlight (Yellow)"
-                  >
-                    Highlight
-                  </button>
-
-                  {/* Divider */}
-                  <div className="w-px h-6 bg-raised mx-0.5" />
-
-                  {/* Color options */}
-                  {Object.entries(HIGHLIGHT_COLORS).map(([color, info]) => (
-                    <button
-                      key={color}
-                      onClick={() => handleCreateHighlight(color)}
-                      className={`w-6 h-6 rounded-full transition-all hover:scale-125 ${color === DEFAULT_HIGHLIGHT_COLOR ? 'ring-2 ring-offset-1 ring-offset-surface ring-camel/50' : ''}`}
-                      style={{ backgroundColor: info.border }}
-                      title={`${info.name} - ${info.meaning}`}
-                    />
-                  ))}
-
-                  {/* Divider */}
-                  <div className="w-px h-6 bg-raised mx-0.5" />
-
-                  {/* Copy button */}
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(selection.text)
-                      setSelection(null)
-                      setPopupPosition(null)
-                      window.getSelection()?.removeAllRanges()
-                    }}
-                    className="w-7 h-7 rounded-md flex items-center justify-center bg-raised hover:bg-elevated text-muted hover:text-primary transition-all"
-                    title="Copy text"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                    </svg>
-                  </button>
-                </div>
-              )}
+              {highlightPopup}
         </main>
 
       {/* Resize Handle: Content ↔ Sidebar - hidden when chat expanded */}
@@ -638,18 +906,7 @@ export default function Reader() {
         style={isChatExpanded ? {} : { width: sidebarWidth }}
         className={`h-full ${isChatExpanded ? 'flex-[7]' : 'flex-shrink-0'}`}
       >
-        <ReaderSidebar
-          sourceId={id}
-          documentData={data}
-          highlights={highlights}
-          onHighlightClick={scrollToHighlight}
-          onHighlightDelete={handleDeleteHighlight}
-          content={data?.content || ''}
-          selection={selection}
-          isChatExpanded={isChatExpanded}
-          setIsChatExpanded={setIsChatExpanded}
-          initialConversationId={initialConversationId}
-        />
+        <ReaderSidebar {...sidebarProps} />
       </div>
     </div>
   )

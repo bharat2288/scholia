@@ -34,6 +34,7 @@ export function useRLMV2Stream() {
   const [synthesisModel, setSynthesisModel] = useState(null)
   const eventSourceRef = useRef(null)
   const completedRef = useRef(false)
+  const codeBlocksRef = useRef([])
   const queryClient = useQueryClient()
 
   // Cleanup on unmount
@@ -58,6 +59,7 @@ export function useRLMV2Stream() {
     setIsStreaming(true)
     setIsSynthesizing(false)
     setCodeBlocks([])
+    codeBlocksRef.current = []
     setResult(null)
     setError(null)
     setCurrentIteration(0)
@@ -89,16 +91,20 @@ export function useRLMV2Stream() {
               break
 
             case 'code_block':
-              setCodeBlocks(prev => [...prev, {
-                code: data.code,
-                iteration: data.iteration,
-                stdout: null,
-                stderr: null,
-                error: null,
-                duration_ms: null,
-                subLlmCount: 0,
-                status: 'running'
-              }])
+              setCodeBlocks(prev => {
+                const updated = [...prev, {
+                  code: data.code,
+                  iteration: data.iteration,
+                  stdout: null,
+                  stderr: null,
+                  error: null,
+                  duration_ms: null,
+                  subLlmCount: 0,
+                  status: 'running'
+                }]
+                codeBlocksRef.current = updated
+                return updated
+              })
               break
 
             case 'sub_llm_done':
@@ -111,6 +117,7 @@ export function useRLMV2Stream() {
                     subLlmCount: data.count,
                   }
                 }
+                codeBlocksRef.current = updated
                 return updated
               })
               break
@@ -129,6 +136,7 @@ export function useRLMV2Stream() {
                     status: data.error ? 'error' : 'success'
                   }
                 }
+                codeBlocksRef.current = updated
                 return updated
               })
               break
@@ -154,7 +162,11 @@ export function useRLMV2Stream() {
 
             case 'saved':
               completedRef.current = true
-              setResult(prev => prev ? { ...prev, message_id: data.message_id } : data)
+              setResult(prev => prev ? {
+                ...prev,
+                message_id: data.message_id,
+                codeBlocks: codeBlocksRef.current
+              } : data)
               setIsStreaming(false)
               eventSource.close()
               eventSourceRef.current = null

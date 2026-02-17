@@ -61,27 +61,26 @@ export default function Knowledge() {
   }, [searchParams])
 
   return (
-    <div className="min-h-screen bg-base">
+    <div className="min-h-screen bg-base pb-16 sm:pb-0">
       {/* Header */}
       <header className="border-b border-raised bg-surface">
-        <div className="max-w-6xl mx-auto px-8 py-6">
+        <div className="max-w-6xl mx-auto px-4 sm:px-8 py-4 sm:py-6">
           {/* Top row: back link + title + search */}
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-0 mb-4 sm:mb-6">
+            <div className="flex items-center gap-4 sm:gap-6">
               <Link to="/" className="text-tertiary hover:text-secondary transition-colors text-sm">
                 ← Library
               </Link>
               <div className="relative">
-                <h1 className="font-display text-4xl text-primary">
+                <h1 className="font-display text-3xl sm:text-4xl text-primary">
                   Knowledge
                 </h1>
-                {/* Hand-drawn spark positioned to the right of title */}
-                <SparkSVG className="absolute -top-2 -right-12" />
+                <SparkSVG className="absolute -top-2 -right-12 hidden sm:block" />
               </div>
             </div>
 
             {/* Search bar */}
-            <div className="flex-1 max-w-md ml-8">
+            <div className="flex-1 sm:max-w-md sm:ml-8">
               <input
                 type="text"
                 placeholder="Search notes and tags..."
@@ -95,8 +94,8 @@ export default function Knowledge() {
             </div>
           </div>
 
-          {/* Tabs */}
-          <div className="flex gap-1">
+          {/* Tabs — horizontal scroll on mobile */}
+          <div className="flex gap-1 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
             <TabButton
               active={activeTab === 'notes'}
               onClick={() => { setActiveTab('notes'); setSelectedTag(null); }}
@@ -138,7 +137,7 @@ export default function Knowledge() {
       </header>
 
       {/* Content */}
-      <main className="max-w-6xl mx-auto px-8 py-8">
+      <main className="max-w-6xl mx-auto px-4 sm:px-8 py-6 sm:py-8">
         {activeTab === 'notes' && (
           <NotesPanel
             searchQuery={searchQuery}
@@ -174,7 +173,7 @@ function TabButton({ active, onClick, children }) {
   return (
     <button
       onClick={onClick}
-      className={`px-4 py-2 text-sm font-medium transition-colors
+      className={`px-4 py-2 text-sm font-medium transition-colors whitespace-nowrap
         ${active
           ? 'text-camel border-b-2 border-camel'
           : 'text-tertiary hover:text-secondary border-b-2 border-transparent'

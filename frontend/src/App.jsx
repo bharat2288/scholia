@@ -7,6 +7,7 @@ import Knowledge from './components/Knowledge/Knowledge'
 import Gluon from './components/Gluon/Gluon'
 import SectionEditor from './components/Editor/SectionEditor'
 import Research from './components/Research/Research'
+import MobileNavBar from './components/common/MobileNavBar'
 
 /**
  * Scholia App
@@ -37,6 +38,7 @@ function App() {
         <Route path="/gluon/:id" element={<Gluon />} />
         <Route path="/research" element={<Research />} />
       </Routes>
+      <MobileNavBar />
     </BrowserRouter>
   )
 }

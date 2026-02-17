@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useSources, useHealth, useDeleteSource, useSourceGluonStats, useRefreshSources, useBatchSuggestMetadata, useUpdateSource, useFindOrCreateTags, useFindOrCreatePeople } from '../../hooks/useApi'
 import useLibraryStore from '../../stores/useLibraryStore'
+import useDeviceLayout from '../../hooks/useDeviceLayout'
 import MetadataEditModal from '../common/MetadataEditModal'
 import AddSourceModal from '../common/AddSourceModal'
 
@@ -120,7 +121,7 @@ function FilterBar({
   if (allSources.length === 0) return null
 
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-6 pb-4 border-b border-subtle">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-6 pb-4 border-b border-subtle overflow-x-auto">
       {/* Source type filters */}
       <div className="flex items-center gap-2">
         <span className="text-muted text-xs uppercase tracking-wider">Type</span>
@@ -329,101 +330,140 @@ export default function Library() {
     })
   }
 
+  const layout = useDeviceLayout()
+  const isMobile = layout === 'mobile'
+
   return (
-    <div className="min-h-screen bg-base">
+    <div className="min-h-screen bg-base pb-16 sm:pb-0">
       {/* Header */}
-      <header className="border-b border-raised px-8 py-6">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <div className="relative">
-            <h1 className="font-display text-5xl text-primary mb-1">
-              Scholia
-            </h1>
-            {/* Hand-drawn constellation positioned to the right of title */}
-            <ConstellationSVG className="absolute -top-3 -right-12" />
-            <p className="text-secondary">
-              Your research library
-            </p>
-          </div>
+      <header className="border-b border-raised px-4 sm:px-8 py-4 sm:py-6">
+        <div className="max-w-6xl mx-auto">
+          {/* MOBILE: stacked layout (title row, then search row) */}
+          {isMobile ? (
+            <>
+              <div className="flex items-center justify-between mb-3">
+                <h1 className="font-display text-3xl text-primary">Scholia</h1>
+                <Link
+                  to="/processor"
+                  className="p-2 bg-gradient-to-r from-camel to-terra rounded-lg text-base"
+                  title="Import sources"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                  </svg>
+                </Link>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Search sources..."
+                  value={searchQuery}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="bg-base border border-subtle rounded-lg px-4 py-2 text-primary placeholder:text-muted focus:border-camel focus:outline-none flex-1 shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)]"
+                />
+                <button
+                  onClick={handleRefresh}
+                  disabled={refreshSources.isPending}
+                  className="p-2 bg-surface border border-subtle rounded-lg text-muted hover:text-secondary transition-all disabled:opacity-50"
+                  title="Refresh library"
+                >
+                  <svg className={`w-5 h-5 ${refreshSources.isPending ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setShowClipModal(true)}
+                  className="p-2 bg-surface border border-subtle rounded-lg text-blue-400/70 hover:text-blue-400 transition-all"
+                  title="Clip URL"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                  </svg>
+                </button>
+              </div>
+            </>
+          ) : (
+            /* DESKTOP/TABLET: original single-row layout — title left, actions right */
+            <div className="flex items-center justify-between">
+              <div className="relative">
+                <h1 className="font-display text-5xl text-primary mb-1">
+                  Scholia
+                </h1>
+                <ConstellationSVG className="absolute -top-3 -right-12" />
+                <p className="text-secondary">
+                  Your research library
+                </p>
+              </div>
 
-          {/* Search and Actions */}
-          <div className="flex items-center gap-4">
-            <input
-              type="text"
-              placeholder="Search sources..."
-              value={searchQuery}
-              onChange={(e) => setSearch(e.target.value)}
-              className="bg-base border border-subtle rounded-lg px-4 py-2 text-primary placeholder:text-muted focus:border-camel focus:outline-none w-64 shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)]"
-            />
-            {/* Icon-only action buttons */}
-            <button
-              onClick={handleRefresh}
-              disabled={refreshSources.isPending}
-              className="p-2 bg-surface border border-subtle rounded-lg text-muted hover:text-secondary hover:border-subtle transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Refresh library"
-            >
-              <svg
-                className={`w-5 h-5 ${refreshSources.isPending ? 'animate-spin' : ''}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </button>
-            <button
-              onClick={() => setShowBatchMetadataModal(true)}
-              disabled={sources.length === 0}
-              className="relative p-2 bg-surface border border-subtle rounded-lg text-purple-400/70 hover:text-purple-400 hover:border-purple-400/30 hover:bg-purple-400/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              title={selectedIds.size > 0
-                ? `AI suggestions for ${selectedIds.size} selected`
-                : 'AI metadata suggestions'
-              }
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-              </svg>
-              {selectedIds.size > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-purple-500 text-white text-[10px] font-bold px-1">
-                  {selectedIds.size}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => setShowClipModal(true)}
-              className="p-2 bg-surface border border-subtle rounded-lg text-blue-400/70 hover:text-blue-400 hover:border-blue-400/30 hover:bg-blue-400/10 transition-all"
-              title="Clip URL"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-              </svg>
-            </button>
-            <Link
-              to="/processor"
-              className="p-2 bg-gradient-to-r from-camel to-terra rounded-lg text-base hover:shadow-lg hover:shadow-camel/30 transition-all hover:-translate-y-0.5"
-              title="Import sources"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-              </svg>
-            </Link>
+              <div className="flex items-center gap-4">
+                <input
+                  type="text"
+                  placeholder="Search sources..."
+                  value={searchQuery}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="bg-base border border-subtle rounded-lg px-4 py-2 text-primary placeholder:text-muted focus:border-camel focus:outline-none w-64 shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)]"
+                />
+                <button
+                  onClick={handleRefresh}
+                  disabled={refreshSources.isPending}
+                  className="p-2 bg-surface border border-subtle rounded-lg text-muted hover:text-secondary hover:border-subtle transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Refresh library"
+                >
+                  <svg className={`w-5 h-5 ${refreshSources.isPending ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setShowBatchMetadataModal(true)}
+                  disabled={sources.length === 0}
+                  className="relative p-2 bg-surface border border-subtle rounded-lg text-purple-400/70 hover:text-purple-400 hover:border-purple-400/30 hover:bg-purple-400/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={selectedIds.size > 0 ? `AI suggestions for ${selectedIds.size} selected` : 'AI metadata suggestions'}
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                  </svg>
+                  {selectedIds.size > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-purple-500 text-white text-[10px] font-bold px-1">
+                      {selectedIds.size}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setShowClipModal(true)}
+                  className="p-2 bg-surface border border-subtle rounded-lg text-blue-400/70 hover:text-blue-400 hover:border-blue-400/30 hover:bg-blue-400/10 transition-all"
+                  title="Clip URL"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                  </svg>
+                </button>
+                <Link
+                  to="/processor"
+                  className="p-2 bg-gradient-to-r from-camel to-terra rounded-lg text-base hover:shadow-lg hover:shadow-camel/30 transition-all hover:-translate-y-0.5"
+                  title="Import sources"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                  </svg>
+                </Link>
 
-            {/* Divider */}
-            <div className="w-px h-6 bg-subtle" />
+                <div className="w-px h-6 bg-subtle" />
 
-            {/* Word chip navigation */}
-            <Link
-              to="/knowledge"
-              className="px-3 py-1.5 text-sm bg-surface border border-subtle rounded-lg text-secondary hover:text-primary hover:border-camel/50 transition-colors"
-            >
-              Knowledge
-            </Link>
-            <Link
-              to="/research"
-              className="px-3 py-1.5 text-sm bg-surface border border-subtle rounded-lg text-secondary hover:text-primary hover:border-camel/50 transition-colors"
-            >
-              Research
-            </Link>
-          </div>
+                <Link
+                  to="/knowledge"
+                  className="px-3 py-1.5 text-sm bg-surface border border-subtle rounded-lg text-secondary hover:text-primary hover:border-camel/50 transition-colors"
+                >
+                  Knowledge
+                </Link>
+                <Link
+                  to="/research"
+                  className="px-3 py-1.5 text-sm bg-surface border border-subtle rounded-lg text-secondary hover:text-primary hover:border-camel/50 transition-colors"
+                >
+                  Research
+                </Link>
+              </div>
+            </div>
+          )}
         </div>
       </header>
 
@@ -451,7 +491,7 @@ export default function Library() {
       )}
 
       {/* Main Content */}
-      <main className="max-w-6xl mx-auto px-8 py-8">
+      <main className="max-w-6xl mx-auto px-4 sm:px-8 py-6 sm:py-8">
         {/* Filter Bar */}
         <FilterBar
           allSources={data?.value || data || []}

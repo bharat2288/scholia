@@ -45,14 +45,18 @@ MAX_CODE_LENGTH = 30000
 MAX_CONSECUTIVE_ERRORS = 3
 
 # System prompt for the orchestrator LLM
-ORCHESTRATOR_SYSTEM_PROMPT = """You are a research assistant with access to a Python environment.
-Documents are loaded as string variables. Write Python code to explore them.
+# Modeled on Zhang et al. (2025) RLM system prompt which heavily emphasizes
+# sub-LLM usage. Their key insight: the orchestrator should use llm_query()
+# as much as possible for semantic analysis, not just search/peek for retrieval.
+ORCHESTRATOR_SYSTEM_PROMPT = """You are a research assistant with access to a Python REPL environment containing document data. You can access, transform, and analyze documents interactively, and you are **strongly encouraged to use sub-LLM queries as much as possible**. You will be queried iteratively until you provide a final answer.
 
 ## Available Variables
 - `docs` — dict mapping source_id to full document text
 - `doc_info` — dict mapping source_id to metadata: {title, author, year, sections: [{id, title, start, end}]}
 
 ## Available Functions
+
+### Document Access
 - `search(pattern, doc_id=None)` — Regex search across docs. Returns list of {source_id, match, start, end, context_before, context_after, section}
 - `peek(doc_id, start, end)` — Read character range. Returns {text, page_start, section}
 - `toc(doc_id)` — Get table of contents. Returns hierarchical section list
@@ -60,35 +64,71 @@ Documents are loaded as string variables. Write Python code to explore them.
 - `read_section(doc_id, section_id)` — Read full section text. Returns {text, title, page_start}
 - `highlights(doc_id)` — Get user's highlights. Returns list of {text, color, start_offset, page}
 - `notes(doc_id)` — Get user's notes. Returns list of {content, tags}
-- `llm_query(prompt, context="")` — Ask a sub-LLM to reason about text. Returns string response
-- `llm_query_batch(items)` — Concurrent sub-LLM calls. items = list of {prompt, context}. Returns list of strings
+
+### Sub-LLM Queries (USE THESE HEAVILY)
+- `llm_query(prompt, context="")` — Ask a sub-LLM to reason about text. Returns string response. The sub-LLM can handle large passages (~50K chars). **You should use this function on any passage you want to analyze semantically.** Don't try to reason about long passages yourself — delegate to llm_query.
+- `llm_query_batch(items)` — Concurrent sub-LLM calls. items = list of {prompt, context}. Returns list of strings. Use this when you need to analyze multiple passages — it runs them all concurrently for speed.
+
+### State Management
 - `store(key, value)` — Save a value for use in later iterations
 - `recall(key)` — Retrieve a stored value (returns None if not found)
 - `FINAL_ANSWER(text)` — Submit your final answer. Call this when done
 
-## Research Methodology
-1. Write code in ```python fenced blocks. Only code inside these blocks is executed.
-2. Use `print()` to see results — stdout is your only feedback channel.
-3. Use `llm_query()` for semantic reasoning about specific passages.
-4. Use `llm_query_batch()` when you need to analyze multiple passages concurrently.
-5. Be strategic: search → read relevant passages → analyze → collect evidence → synthesize.
+## Research Strategy
+
+Write code in ```python fenced blocks. Only code inside these blocks is executed. Use `print()` to see results — stdout is your only feedback channel.
+
+**Your sub-LLMs are powerful.** They can fit ~50K characters in their context and perform sophisticated reasoning, extraction, and analysis. Don't be afraid to send large passages. A strong strategy is:
+
+1. **Survey**: Use `toc()` and `section_titles()` to understand document structure.
+2. **Search**: Use `search()` to find relevant sections by keyword/pattern.
+3. **Read**: Use `read_section()` or `peek()` to extract full passages.
+4. **Analyze with sub-LLMs**: Feed passages to `llm_query()` or `llm_query_batch()` with specific analytical prompts. For example:
+   - "Extract the main arguments from this passage"
+   - "Find all direct quotes relevant to [topic]"
+   - "Summarize the methodology described here"
+   - "What claims does the author make about [X]?"
+5. **Store evidence**: Use `store()` to accumulate analyzed findings across iterations.
+6. **Synthesize**: When you have enough evidence, compile into FINAL_ANSWER.
+
+**Example pattern — analyzing multiple sections with sub-LLMs:**
+```
+# Read sections and batch-analyze them
+sections_to_read = [0, 3, 5, 7]
+batch = []
+for idx in sections_to_read:
+    content = read_section(doc_id, idx)
+    batch.append({
+        "prompt": f"Extract key arguments and direct quotes about [topic] from this section. Include page numbers.",
+        "context": content["text"]
+    })
+
+analyses = llm_query_batch(batch)
+for i, analysis in enumerate(analyses):
+    store(f"analysis_{sections_to_read[i]}", {
+        "analysis": analysis,
+        "section": sections_to_read[i],
+        "doc_id": doc_id
+    })
+    print(f"Section {sections_to_read[i]}: {analysis[:200]}...")
+```
+
+**Example pattern — deep analysis of a single passage:**
+```
+passage = peek(doc_id, start, end)
+analysis = llm_query(
+    "Analyze this passage for its theoretical framework. What assumptions does the author make? What evidence do they provide? Extract all direct quotes with page context.",
+    passage["text"]
+)
+store("deep_analysis_1", {"analysis": analysis, "page": passage["page_start"], "section": passage["section"]})
+print(analysis)
+```
 
 ## Citation Requirements (CRITICAL)
 Your findings will be used to produce a scholarly response. You MUST collect:
-- **Direct quotes**: Use `peek()` or `read_section()` to read passages, then store exact quotes.
+- **Direct quotes**: Use `peek()` or `read_section()` to read passages, then use `llm_query()` to extract the most relevant quotes.
 - **Page numbers**: Both `peek()` and `read_section()` return `page_start`. Always record it.
 - **Section/chapter titles**: Returned by `peek()`, `read_section()`, and `search()`.
-
-Use `store()` to accumulate evidence as you go. Example pattern:
-```
-result = peek(doc_id, start, end)
-store("quote_1", {
-    "text": result["text"][:500],  # exact quote
-    "page": result["page_start"],
-    "section": result["section"],
-    "author": doc_info[doc_id]["author"]
-})
-```
 
 ## FINAL_ANSWER Requirements
 When you call FINAL_ANSWER(text), include:
@@ -100,7 +140,9 @@ When you call FINAL_ANSWER(text), include:
 
 The text you pass to FINAL_ANSWER is your complete research dossier. Be thorough —
 include all relevant quotes, page numbers, and evidence you collected. A synthesis
-model will polish it into the final response, but it can only cite what you provide."""
+model will polish it into the final response, but it can only cite what you provide.
+
+Think step by step, plan your research strategy, and execute it immediately — do not just describe what you will do. Use sub-LLMs as much as possible to analyze passages."""
 
 
 def _extract_code_blocks(text: str) -> list[str]:
@@ -169,6 +211,7 @@ class RLMV2Engine:
         self.namespace: dict[str, Any] = {}
         self._stored: dict[str, Any] = {}
         self._final_answer: Optional[str] = None
+        self._doc_reads = 0  # tracks search/peek/read_section calls
         self._sub_llm_calls = 0
         self._sub_llm_tokens = {"input": 0, "output": 0, "cost_usd": 0.0}
         self._synthesis_tokens = {"input": 0, "output": 0, "cost_usd": 0.0}
@@ -246,6 +289,7 @@ class RLMV2Engine:
 
         def search(pattern: str, doc_id: str = None) -> list[dict]:
             """Synchronous regex search on in-memory documents."""
+            engine._doc_reads += 1
             docs = engine.namespace.get("docs", {})
             doc_info = engine.namespace.get("doc_info", {})
             flags = re.IGNORECASE
@@ -290,6 +334,7 @@ class RLMV2Engine:
 
         def peek(doc_id: str, start: int, end: int) -> dict:
             """Read a character range from a document."""
+            engine._doc_reads += 1
             docs = engine.namespace.get("docs", {})
             doc_info = engine.namespace.get("doc_info", {})
 
@@ -329,6 +374,7 @@ class RLMV2Engine:
 
         def read_section(doc_id: str, section_id: str) -> dict:
             """Read a full section by ID."""
+            engine._doc_reads += 1
             docs = engine.namespace.get("docs", {})
             doc_info = engine.namespace.get("doc_info", {})
 
@@ -706,11 +752,30 @@ Format with markdown."""
 
             if not code_blocks:
                 # No code blocks — check if there's a FINAL_ANSWER in the text
-                # or if the model just wants to respond directly
                 if self._final_answer:
                     break
 
-                # Model responded without code — treat as final answer
+                if iteration <= 2 and self._doc_reads == 0:
+                    # Orchestrator tried to answer without reading documents.
+                    # Force it back into code-writing mode.
+                    self._log(
+                        f"No code blocks and 0 doc reads on iteration "
+                        f"{iteration} — forcing document exploration"
+                    )
+                    conversation.append({"role": "assistant", "content": response_text})
+                    conversation.append({
+                        "role": "user",
+                        "content": (
+                            "You MUST write Python code in ```python blocks to "
+                            "explore the documents. Use search(), peek(), and "
+                            "read_section() to find actual text. Do NOT answer "
+                            "from memory — extract real quotes from the docs "
+                            "variable. Start by searching for key terms."
+                        ),
+                    })
+                    continue
+
+                # Later iterations or after doc reads: accept prose as final answer
                 self._log("No code blocks found, treating response as final answer")
                 self._final_answer = response_text
                 break
@@ -762,7 +827,22 @@ Format with markdown."""
 
                 # Check if FINAL_ANSWER was called
                 if self._final_answer is not None:
-                    break
+                    # Reject premature answers with no document evidence
+                    if iteration <= 2 and self._doc_reads == 0:
+                        self._log(
+                            "Rejecting FINAL_ANSWER: no document reads "
+                            f"(iteration {iteration}, 0 search/peek/read_section calls)"
+                        )
+                        rejected_answer = self._final_answer
+                        self._final_answer = None  # reset so loop continues
+                        all_stdout.append(
+                            "FINAL_ANSWER rejected: you haven't read any "
+                            "documents yet. Use search(), peek(), or "
+                            "read_section() to find real quotes before "
+                            "answering. Do NOT fabricate quotes."
+                        )
+                    else:
+                        break
 
             # If we have a final answer, stop
             if self._final_answer is not None:
@@ -866,6 +946,12 @@ Format with markdown."""
             },
         }
 
+        # Collect stored evidence (exclude internal highlight/note caches)
+        stored_evidence = {
+            k: v for k, v in self._stored.items()
+            if not k.startswith("_highlights_") and not k.startswith("_notes_")
+        }
+
         yield {
             "event": "complete",
             "data": {
@@ -873,6 +959,9 @@ Format with markdown."""
                 "iterations": iteration,
                 "sub_llm_calls": self._sub_llm_calls,
                 "usage": total_usage,
+                "raw_findings": raw_findings,
+                "stored_evidence": stored_evidence,
+                "doc_reads": self._doc_reads,
             },
         }
 

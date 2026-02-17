@@ -929,17 +929,21 @@ async def session_rlm_v2_stream(
             yield f"data: {json.dumps({'error': 'Session not found'})}\n\n"
             return
 
-        # Validate orchestrator model
+        # Validate all three models
         models = {m["id"]: m for m in get_chat_models()}
-        if orchestrator_model not in models:
-            yield f"event: error\n"
-            yield f"data: {json.dumps({'error': f'Unknown model: {orchestrator_model}'})}\n\n"
-            return
-
-        if not models[orchestrator_model]["available"]:
-            yield f"event: error\n"
-            yield f"data: {json.dumps({'error': f'Model {orchestrator_model} not available'})}\n\n"
-            return
+        for param_name, model_id in [
+            ("orchestrator_model", orchestrator_model),
+            ("sub_model", sub_model),
+            ("synthesis_model", synthesis_model),
+        ]:
+            if model_id not in models:
+                yield f"event: error\n"
+                yield f"data: {json.dumps({'error': f'Unknown {param_name}: {model_id}'})}\n\n"
+                return
+            if not models[model_id]["available"]:
+                yield f"event: error\n"
+                yield f"data: {json.dumps({'error': f'{param_name} {model_id} not available (API key not configured)'})}\n\n"
+                return
 
         # Save user query
         now = datetime.now().isoformat()
@@ -979,6 +983,9 @@ async def session_rlm_v2_stream(
                     final_iterations = event["data"].get("iterations", 0)
                     final_sub_llm_calls = event["data"].get("sub_llm_calls", 0)
                     final_usage = event["data"].get("usage")
+                    final_raw_findings = event["data"].get("raw_findings")
+                    final_stored_evidence = event["data"].get("stored_evidence")
+                    final_doc_reads = event["data"].get("doc_reads", 0)
                 elif event["event"] == "error":
                     had_error = True
         except Exception as e:
@@ -999,6 +1006,9 @@ async def session_rlm_v2_stream(
                 "orchestrator_model": orchestrator_model,
                 "sub_model": sub_model,
                 "synthesis_model": synthesis_model,
+                "raw_findings": final_raw_findings,
+                "stored_evidence": final_stored_evidence,
+                "doc_reads": final_doc_reads,
             }
             await db.execute("""
                 INSERT INTO session_messages

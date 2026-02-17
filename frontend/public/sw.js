@@ -2,7 +2,7 @@
 // Network-first strategy: always try network, fall back to cache.
 // No aggressive caching — Scholia is a live app that needs fresh data.
 
-const CACHE_NAME = 'scholia-v1'
+const CACHE_NAME = 'scholia-v2'
 
 // Cache the app shell on install
 self.addEventListener('install', (event) => {

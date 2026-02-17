@@ -48,63 +48,73 @@ export function useResizable() {
     }
   }, [widths])
 
-  // Handle mouse move during resize
-  const handleMouseMove = useCallback((e) => {
+  // Shared resize logic for both mouse and touch
+  const applyResize = useCallback((clientX) => {
     if (!resizeRef.current.pane) return
 
     const { pane, startX, startWidth } = resizeRef.current
-    const delta = e.clientX - startX
+    const delta = clientX - startX
     const constraints = CONSTRAINTS[pane]
 
     let newWidth
     if (pane === 'toc') {
-      // ToC: dragging right increases width
       newWidth = Math.min(Math.max(startWidth + delta, constraints.min), constraints.max)
     } else {
-      // Sidebar: dragging left increases width
       newWidth = Math.min(Math.max(startWidth - delta, constraints.min), constraints.max)
     }
 
     setWidths(prev => ({ ...prev, [pane]: newWidth }))
   }, [])
 
-  // Handle mouse up to stop resizing
-  const handleMouseUp = useCallback(() => {
+  const handleMouseMove = useCallback((e) => applyResize(e.clientX), [applyResize])
+  const handleTouchMove = useCallback((e) => {
+    if (e.touches.length === 1) applyResize(e.touches[0].clientX)
+  }, [applyResize])
+
+  const stopResize = useCallback(() => {
     resizeRef.current.pane = null
     setIsResizing(false)
     document.body.style.cursor = ''
     document.body.style.userSelect = ''
   }, [])
 
-  // Set up global listeners when resizing starts
+  // Set up global listeners when resizing starts (mouse + touch)
   useEffect(() => {
     if (isResizing) {
       document.addEventListener('mousemove', handleMouseMove)
-      document.addEventListener('mouseup', handleMouseUp)
+      document.addEventListener('mouseup', stopResize)
+      document.addEventListener('touchmove', handleTouchMove, { passive: true })
+      document.addEventListener('touchend', stopResize)
+      document.addEventListener('touchcancel', stopResize)
       return () => {
         document.removeEventListener('mousemove', handleMouseMove)
-        document.removeEventListener('mouseup', handleMouseUp)
+        document.removeEventListener('mouseup', stopResize)
+        document.removeEventListener('touchmove', handleTouchMove)
+        document.removeEventListener('touchend', stopResize)
+        document.removeEventListener('touchcancel', stopResize)
       }
     }
-  }, [isResizing, handleMouseMove, handleMouseUp])
+  }, [isResizing, handleMouseMove, handleTouchMove, stopResize])
 
-  // Start resize for ToC
+  // Start resize — works with both mouse and touch events
+  const startResize = useCallback((pane, clientX, currentWidth) => {
+    resizeRef.current = { pane, startX: clientX, startWidth: currentWidth }
+    setIsResizing(true)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }, [])
+
   const handleTocResize = useCallback((e) => {
     e.preventDefault()
-    resizeRef.current = { pane: 'toc', startX: e.clientX, startWidth: widths.toc }
-    setIsResizing(true)
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-  }, [widths.toc])
+    const x = e.touches ? e.touches[0].clientX : e.clientX
+    startResize('toc', x, widths.toc)
+  }, [widths.toc, startResize])
 
-  // Start resize for Sidebar
   const handleSidebarResize = useCallback((e) => {
     e.preventDefault()
-    resizeRef.current = { pane: 'sidebar', startX: e.clientX, startWidth: widths.sidebar }
-    setIsResizing(true)
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-  }, [widths.sidebar])
+    const x = e.touches ? e.touches[0].clientX : e.clientX
+    startResize('sidebar', x, widths.sidebar)
+  }, [widths.sidebar, startResize])
 
   return {
     tocWidth: widths.toc,
@@ -123,13 +133,19 @@ export function ResizeHandle({ onMouseDown, position = 'right' }) {
   return (
     <div
       onMouseDown={onMouseDown}
+      onTouchStart={onMouseDown}
       className={`
         group relative w-1 flex-shrink-0 cursor-col-resize
         bg-subtle/50 hover:bg-camel/30 active:bg-camel/50
         transition-colors duration-150
+        touch-none
       `}
     >
-      {/* Visual indicator on hover */}
+      {/* Hit area — wider on touch devices for easier grabbing */}
+      <div className={`
+        absolute inset-y-0 -inset-x-2 sm:-inset-x-0
+      `} />
+      {/* Visual indicator */}
       <div className={`
         absolute top-1/2 -translate-y-1/2
         ${position === 'right' ? '-right-0.5' : '-left-0.5'}

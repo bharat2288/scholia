@@ -224,17 +224,17 @@ class ChatService:
                     last_error = f"HTTP {response.status_code}: {error_text}"
                     self._log(f"Anthropic error {response.status_code}: {error_text}")
                     if attempt < MAX_RETRIES - 1:
-                        await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+                        await asyncio.sleep(RETRY_DELAY * (2 ** attempt))
             except asyncio.TimeoutError:
                 last_error = f"Timeout after 120s on attempt {attempt + 1}"
                 self._log(f"Anthropic timeout on attempt {attempt + 1}")
                 if attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+                    await asyncio.sleep(RETRY_DELAY * (2 ** attempt))
             except Exception as e:
                 last_error = f"{type(e).__name__}: {e}"
                 self._log(f"Anthropic exception ({type(e).__name__}): {e}")
                 if attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+                    await asyncio.sleep(RETRY_DELAY * (2 ** attempt))
 
         return {
             "success": False,
@@ -242,7 +242,7 @@ class ChatService:
             "content": None
         }
 
-    async def _call_openai(
+    async def _call_openai_compatible(
         self,
         client: httpx.AsyncClient,
         model_id: str,
@@ -250,20 +250,21 @@ class ChatService:
         system: str = None,
         max_tokens: int = 12288
     ) -> dict:
-        """Call OpenAI API with retry logic."""
+        """Call OpenAI-compatible API (OpenAI, OpenRouter) with retry logic."""
         config = CHAT_MODELS.get(model_id)
-        if not config or config["provider"] != "openai":
+        provider = config["provider"] if config else None
+        if not config or provider not in ("openai", "openrouter"):
             return {
                 "success": False,
-                "error": f"Invalid OpenAI model: {model_id}",
+                "error": f"Invalid OpenAI-compatible model: {model_id}",
                 "content": None
             }
 
-        api_key = get_api_key("openai")
+        api_key = get_api_key(provider)
         if not api_key:
             return {
                 "success": False,
-                "error": "OpenAI API key not configured",
+                "error": f"{provider} API key not configured",
                 "content": None
             }
 
@@ -271,6 +272,10 @@ class ChatService:
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
+        # OpenRouter best practice: identify the app
+        if provider == "openrouter":
+            headers["HTTP-Referer"] = "http://localhost:5176"
+            headers["X-Title"] = "Scholia"
 
         # Build OpenAI messages
         openai_messages = []
@@ -290,7 +295,7 @@ class ChatService:
 
         for attempt in range(MAX_RETRIES):
             try:
-                self._log(f"OpenAI attempt {attempt + 1}/{MAX_RETRIES}")
+                self._log(f"{provider} attempt {attempt + 1}/{MAX_RETRIES}")
                 response = await client.post(
                     config["api_url"],
                     headers=headers,
@@ -308,17 +313,17 @@ class ChatService:
                     }
                 else:
                     error_text = response.text[:200]
-                    self._log(f"OpenAI error {response.status_code}: {error_text}")
+                    self._log(f"{provider} error {response.status_code}: {error_text}")
                     if attempt < MAX_RETRIES - 1:
-                        await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+                        await asyncio.sleep(RETRY_DELAY * (2 ** attempt))
             except asyncio.TimeoutError:
-                self._log(f"OpenAI timeout on attempt {attempt + 1}")
+                self._log(f"{provider} timeout on attempt {attempt + 1}")
                 if attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+                    await asyncio.sleep(RETRY_DELAY * (2 ** attempt))
             except Exception as e:
-                self._log(f"OpenAI exception: {str(e)}")
+                self._log(f"{provider} exception: {str(e)}")
                 if attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+                    await asyncio.sleep(RETRY_DELAY * (2 ** attempt))
 
         return {
             "success": False,
@@ -374,8 +379,8 @@ class ChatService:
                 result = await self._call_anthropic(
                     client, model_id, messages, effective_system, context, max_tokens
                 )
-            elif config["provider"] == "openai":
-                # OpenAI: merge context into system prompt (no caching support)
+            elif config["provider"] in ("openai", "openrouter"):
+                # OpenAI-compatible: merge context into system prompt
                 full_system = effective_system
                 if context:
                     full_system = f"""{full_system}
@@ -384,7 +389,7 @@ DOCUMENT CONTEXT:
 {context}
 
 When answering, reference specific parts of the document when relevant."""
-                result = await self._call_openai(
+                result = await self._call_openai_compatible(
                     client, model_id, messages, full_system, max_tokens
                 )
             else:
@@ -524,17 +529,17 @@ When answering, reference specific parts of the document when relevant."""
                     last_error = f"HTTP {response.status_code}: {error_text}"
                     self._log(f"Anthropic error {response.status_code}: {error_text}")
                     if attempt < MAX_RETRIES - 1:
-                        await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+                        await asyncio.sleep(RETRY_DELAY * (2 ** attempt))
             except asyncio.TimeoutError:
                 last_error = f"Timeout after 180s on attempt {attempt + 1}"
                 self._log(f"Anthropic timeout on attempt {attempt + 1}")
                 if attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+                    await asyncio.sleep(RETRY_DELAY * (2 ** attempt))
             except Exception as e:
                 last_error = f"{type(e).__name__}: {e}"
                 self._log(f"Anthropic exception ({type(e).__name__}): {e}")
                 if attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+                    await asyncio.sleep(RETRY_DELAY * (2 ** attempt))
 
         return {
             "success": False,
