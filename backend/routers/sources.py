@@ -1,7 +1,7 @@
 """
 Sources Router
 ==============
-API endpoints for source management (documents, web clips, threads, media).
+API endpoints for source management (documents, web clips, threads, media, notes).
 
 Endpoints:
 - GET    /sources          - List all sources
@@ -17,7 +17,7 @@ Endpoints:
 - DELETE /sources/:id      - Delete source
 """
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, HTTPException, UploadFile, File, Query, Form
 from pydantic import BaseModel
 from typing import List, Optional
 from pathlib import Path
@@ -86,6 +86,7 @@ DOCUMENTS_DIR = SOURCES_DIR / "documents"
 WEB_DIR = SOURCES_DIR / "web"
 THREADS_DIR = SOURCES_DIR / "threads"
 VIDEOS_DIR = SOURCES_DIR / "videos"
+NOTES_DIR = SOURCES_DIR / "notes"
 
 # Legacy path (for migration period - check both locations)
 LEGACY_DOCUMENTS_DIR = DATA_DIR / "documents"
@@ -1062,6 +1063,197 @@ def _compute_pdf_hash(pdf_path: Path) -> Optional[str]:
         return None
 
 
+# ============================================================
+# Note Import
+# ============================================================
+
+@router.post("/import-note/preview")
+async def preview_note_endpoint(file: UploadFile = File(...)):
+    """
+    Preview a markdown file before importing.
+
+    Extracts title from first heading, counts words, and runs AI metadata
+    suggestions so the modal can pre-fill fields before save.
+
+    Returns:
+        title, word_count, suggestions (from AI)
+    """
+    from services.note_importer import preview_note
+
+    # Validate file type
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+
+    # Read file content
+    raw_bytes = await file.read()
+    try:
+        content = raw_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        content = raw_bytes.decode("latin-1")
+
+    # Cap content for AI suggestions at 100KB
+    if len(content) > 100_000:
+        ai_content = content[:100_000]
+    else:
+        ai_content = content
+
+    # Quick preview (title + word count)
+    preview = preview_note(content, file.filename)
+
+    # AI metadata suggestions
+    suggestions_data = []
+    try:
+        result = await suggest_metadata(
+            ai_content,
+            source_id="preview",
+            source_type="note",
+        )
+        suggestions_data = format_suggestions_for_review(result)
+    except Exception as e:
+        logger.warning(f"AI metadata suggestion failed for note preview: {e}")
+
+    return {
+        "title": preview["title"],
+        "word_count": preview["word_count"],
+        "suggestions": suggestions_data,
+    }
+
+
+@router.post("/import-note")
+async def import_note_endpoint(
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(None),
+    author: Optional[str] = Form(None),
+    year: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    keywords: Optional[str] = Form(None),
+    keyword_gluon_ids: Optional[str] = Form(None),
+    author_gluon_ids: Optional[str] = Form(None),
+):
+    """
+    Import a markdown file as a note source.
+
+    Converts markdown headings to [SECTION] markers, saves to
+    data/sources/notes/, and creates a source row in the database.
+
+    Args:
+        file: The .md file to import
+        title: Optional title override (extracted from first heading if not provided)
+        author: Optional author display string (semicolon-separated)
+        year: Optional publication year
+        description: Optional description
+        keywords: Optional semicolon-separated keyword display string
+        keyword_gluon_ids: Optional JSON array of tag gluon IDs
+        author_gluon_ids: Optional JSON array of person gluon IDs
+    """
+    from services.note_importer import import_note
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+
+    # Read file content
+    raw_bytes = await file.read()
+    try:
+        content = raw_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        content = raw_bytes.decode("latin-1")
+
+    # Dedup: check if a note with the same title already exists
+    from services.note_importer import _extract_title
+    check_title = title.strip() if title else _extract_title(content, file.filename)
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT id, title FROM sources WHERE source_type = 'note' AND title = ?",
+        [check_title]
+    )
+    existing = await cursor.fetchone()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Note already imported as '{existing[1]}' (id: {existing[0]})"
+        )
+
+    # Ensure notes directory exists
+    NOTES_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Import the note
+    result = import_note(
+        content=content,
+        filename=file.filename,
+        notes_dir=NOTES_DIR,
+        title_override=title.strip() if title else None,
+    )
+
+    # Parse year
+    parsed_year = None
+    if year:
+        try:
+            parsed_year = int(year)
+        except ValueError:
+            pass
+
+    # Build metadata (same structure as MetadataEditModal saves)
+    source_metadata = {}
+    if description:
+        source_metadata["description"] = description
+    if keywords:
+        source_metadata["keywords"] = keywords
+    if keyword_gluon_ids:
+        source_metadata["keyword_gluon_ids"] = keyword_gluon_ids
+    if author_gluon_ids:
+        source_metadata["author_gluon_ids"] = author_gluon_ids
+    source_metadata["word_count"] = result.word_count
+    source_metadata["original_filename"] = file.filename
+
+    # Generate source ID and insert
+    source_id = str(uuid.uuid4())[:8]
+    now = datetime.now().isoformat()
+
+    await db.execute("""
+        INSERT INTO sources (id, title, source_type, author_display, year,
+                            content_path, metadata, created_at, updated_at)
+        VALUES (?, ?, 'note', ?, ?, ?, ?, ?, ?)
+    """, [
+        source_id, result.title, author, parsed_year,
+        result.content_path, json.dumps(source_metadata),
+        now, now
+    ])
+
+    # Insert sections
+    for i, section in enumerate(result.sections):
+        section_id = f"{source_id}-s{i}"
+        await db.execute("""
+            INSERT INTO sections (id, source_id, title, level, start_offset,
+                                  end_offset, order_index, parent_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, [
+            section_id, source_id, section["title"], section["level"],
+            section["start_offset"], section["end_offset"], i, None
+        ])
+
+    # Index in FTS
+    await db.execute("""
+        INSERT INTO sources_fts (rowid, title, author_display)
+        SELECT rowid, title, author_display FROM sources WHERE id = ?
+    """, [source_id])
+
+    # Sync gluon links (tags + authors) — same as PATCH endpoint
+    await _sync_source_gluon_links(db, source_id, source_metadata)
+
+    await db.commit()
+
+    return {
+        "id": source_id,
+        "title": result.title,
+        "author": author,
+        "year": parsed_year,
+        "source_type": "note",
+        "word_count": result.word_count,
+        "sections_count": len(result.sections),
+        "content_path": result.content_path,
+    }
+
+
 @router.post("/refresh")
 async def refresh_sources():
     """
@@ -1072,6 +1264,7 @@ async def refresh_sources():
     - data/sources/web/ - web clips
     - data/sources/threads/ - tweets/threads
     - data/sources/videos/ - video transcripts
+    - data/sources/notes/ - markdown notes
 
     This is the safe way to add sources that exist on disk but not in the library:
     - Imports sources that aren't in the database yet
@@ -1116,6 +1309,12 @@ async def refresh_sources():
     all_imported.extend(web_results["imported"])
     all_skipped.extend(web_results["skipped"])
     all_errors.extend(web_results["errors"])
+
+    # 5. Refresh notes
+    note_results = await _refresh_notes(db)
+    all_imported.extend(note_results["imported"])
+    all_skipped.extend(note_results["skipped"])
+    all_errors.extend(note_results["errors"])
 
     await db.commit()
 
@@ -1727,6 +1926,106 @@ async def _refresh_web(db) -> dict:
                 "folder_name": folder_name,
                 "source_type": "web",
                 "error": str(e)
+            })
+
+    return {"imported": imported, "skipped": skipped, "errors": errors}
+
+
+async def _refresh_notes(db) -> dict:
+    """
+    Refresh note sources from data/sources/notes/.
+
+    Scans for *--note--extracted.txt files and imports any that aren't
+    already in the library.
+    """
+    if not NOTES_DIR.exists():
+        return {"imported": [], "skipped": [], "errors": []}
+
+    imported = []
+    skipped = []
+    errors = []
+
+    # Get existing note sources by content_path
+    cursor = await db.execute("SELECT id, content_path FROM sources WHERE source_type = 'note'")
+    rows = await cursor.fetchall()
+    existing_by_content = {_normalize_path(row[1]): row[0] for row in rows if row[1]}
+
+    for folder in NOTES_DIR.iterdir():
+        if not folder.is_dir():
+            continue
+
+        folder_name = folder.name
+        extracted_txt = folder / f"{folder_name}--note--extracted.txt"
+
+        if not extracted_txt.exists():
+            continue
+
+        norm_content_path = _normalize_path(str(extracted_txt))
+
+        if norm_content_path in existing_by_content:
+            skipped.append({
+                "folder_name": folder_name,
+                "source_type": "note",
+                "reason": "already in library",
+            })
+            continue
+
+        try:
+            source_id = str(uuid.uuid4())[:8]
+            now = datetime.now().isoformat()
+
+            content = extracted_txt.read_text(encoding="utf-8")
+            sections = _parse_sections(content, source_id)
+
+            # Extract title from [TITLE] marker
+            title = folder_name
+            title_match = re.search(r'\[TITLE\]\s*(.+?)(?:\n|$)', content)
+            if title_match:
+                title = title_match.group(1).strip()
+
+            source_metadata = {
+                "recovered_from_disk": True,
+            }
+
+            await db.execute("""
+                INSERT INTO sources (id, title, source_type, author_display, year,
+                                    content_path, metadata, created_at, updated_at)
+                VALUES (?, ?, 'note', ?, ?, ?, ?, ?, ?)
+            """, [
+                source_id, title, None, None,
+                str(extracted_txt),
+                json.dumps(source_metadata),
+                now, now
+            ])
+
+            for i, section in enumerate(sections):
+                section_id = f"{source_id}-s{i}"
+                await db.execute("""
+                    INSERT INTO sections (id, source_id, title, level, start_offset,
+                                          end_offset, order_index, parent_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, [
+                    section_id, source_id, section["title"], section["level"],
+                    section["start_offset"], section["end_offset"], i, None
+                ])
+
+            await db.execute("""
+                INSERT INTO sources_fts (rowid, title, author_display)
+                SELECT rowid, title, author_display FROM sources WHERE id = ?
+            """, [source_id])
+
+            imported.append({
+                "id": source_id,
+                "folder_name": folder_name,
+                "source_type": "note",
+                "title": title,
+            })
+
+        except Exception as e:
+            errors.append({
+                "folder_name": folder_name,
+                "source_type": "note",
+                "error": str(e),
             })
 
     return {"imported": imported, "skipped": skipped, "errors": errors}

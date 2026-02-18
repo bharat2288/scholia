@@ -47,7 +47,8 @@ const TYPE_CONFIG = {
   web: { label: 'Web', icon: '🌐' },
   thread: { label: 'Threads', icon: '𝕏' },
   tweet: { label: 'Tweets', icon: '𝕏' },
-  media: { label: 'Videos', icon: '▶' }
+  media: { label: 'Videos', icon: '▶' },
+  note: { label: 'Notes', icon: '📝' }
 }
 
 function FilterBar({
@@ -767,6 +768,11 @@ const SOURCE_TYPE_STYLES = {
     label: '▶ Video',
     bg: 'bg-[#ff0000]/20',   // YouTube red at 20%
     text: 'text-[#ff0000]'
+  },
+  note: {
+    label: '📝 Note',
+    bg: 'bg-[#a78bfa]/20',   // Purple at 20%
+    text: 'text-[#a78bfa]'
   },
   default: {
     label: 'Source',

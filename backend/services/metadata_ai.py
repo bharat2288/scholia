@@ -200,6 +200,20 @@ def sample_video_content(content: str) -> str:
     return "\n".join(samples)
 
 
+def sample_note_content(content: str) -> str:
+    """
+    For notes/documentation: read more content (up to 15k chars).
+    Notes are usually focused technical writing, similar to web articles.
+    """
+    max_chars = 15000
+
+    if len(content) <= max_chars:
+        return content
+
+    # Take beginning and end
+    return content[:12000] + "\n\n[... content truncated ...]\n\n" + content[-3000:]
+
+
 def get_sampled_content(content: str, source_type: str) -> str:
     """Get appropriately sampled content based on source type."""
     if source_type in ('thread', 'tweet'):
@@ -208,6 +222,8 @@ def get_sampled_content(content: str, source_type: str) -> str:
         return sample_web_content(content)
     elif source_type == 'media':
         return sample_video_content(content)
+    elif source_type == 'note':
+        return sample_note_content(content)
     else:  # document
         return sample_document_content(content)
 
@@ -371,6 +387,40 @@ IMPORTANT: For keywords, identify 4-8 relevant topics. Think about:
 Only include fields you can determine. Omit fields with confidence below 0.7."""
 
 
+NOTE_PROMPT = """You are a documentation analyst. Analyze the following technical note or documentation and extract relevant metadata.
+
+IMPORTANT RULES:
+1. Title: The note's title (usually the first heading)
+2. Author: If byline or attribution is present, extract it. Often notes are authored by tools or individuals.
+3. Keywords: Extract main topics and themes. Consider:
+   - Technical concepts discussed
+   - Project or domain context
+   - Key ideas and patterns described
+   - What someone would search to find this note
+4. For each field, rate your confidence from 0.0 to 1.0
+
+NOTE CONTENT:
+---
+{content}
+---
+
+Extract the following fields. Respond with ONLY valid JSON, no markdown:
+{{
+  "title": {{"value": "...", "confidence": 0.95}},
+  "author": {{"value": "...", "confidence": 0.7}},
+  "year": {{"value": "2026", "confidence": 0.7}},
+  "abstract": {{"value": "Brief summary of the note's content...", "confidence": 0.8}},
+  "keywords": {{"value": "topic1, topic2, topic3, topic4", "confidence": 0.85}}
+}}
+
+IMPORTANT: For keywords, identify 3-7 relevant topics. Think about:
+- What subjects does this note cover?
+- What technical concepts are discussed?
+- What would someone search to find this note?
+
+Only include fields you can determine. Omit fields with confidence below 0.7."""
+
+
 def get_prompt_for_source_type(source_type: str) -> str:
     """Get the appropriate extraction prompt for the source type."""
     if source_type in ('thread', 'tweet'):
@@ -379,6 +429,8 @@ def get_prompt_for_source_type(source_type: str) -> str:
         return WEB_PROMPT
     elif source_type == 'media':
         return VIDEO_PROMPT
+    elif source_type == 'note':
+        return NOTE_PROMPT
     else:  # document (default)
         return DOCUMENT_PROMPT
 
@@ -391,6 +443,8 @@ def get_system_message_for_source_type(source_type: str) -> str:
         return "You are a web content analyst. Extract metadata and topics from web articles. Respond only with valid JSON."
     elif source_type == 'media':
         return "You are a video content analyst. Extract topics and metadata from video transcripts. Respond only with valid JSON."
+    elif source_type == 'note':
+        return "You are a documentation analyst. Extract topics, keywords, and metadata from technical notes. Respond only with valid JSON."
     else:
         return "You are a precise bibliographic metadata extractor. Respond only with valid JSON."
 

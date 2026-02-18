@@ -234,6 +234,53 @@ export function useClipVideo() {
   })
 }
 
+/**
+ * Preview a markdown note file (extract title, word count, AI suggestions)
+ */
+export function usePreviewNote() {
+  return useMutation({
+    mutationFn: (file) => {
+      const formData = new FormData()
+      formData.append('file', file)
+      return apiFetch('/sources/import-note/preview', {
+        method: 'POST',
+        body: formData,
+        // Let browser set Content-Type with multipart boundary
+        headers: {},
+      })
+    },
+  })
+}
+
+/**
+ * Import a markdown note file as a source
+ */
+export function useImportNote() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ file, title, author, year, description, keywords, keyword_gluon_ids, author_gluon_ids }) => {
+      const formData = new FormData()
+      formData.append('file', file)
+      if (title) formData.append('title', title)
+      if (author) formData.append('author', author)
+      if (year) formData.append('year', String(year))
+      if (description) formData.append('description', description)
+      if (keywords) formData.append('keywords', keywords)
+      if (keyword_gluon_ids) formData.append('keyword_gluon_ids', keyword_gluon_ids)
+      if (author_gluon_ids) formData.append('author_gluon_ids', author_gluon_ids)
+      return apiFetch('/sources/import-note', {
+        method: 'POST',
+        body: formData,
+        // Let browser set Content-Type with multipart boundary
+        headers: {},
+      })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sources'] })
+    },
+  })
+}
+
 // ============================================================
 // Reading
 // ============================================================
