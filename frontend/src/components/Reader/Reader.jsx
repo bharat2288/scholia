@@ -616,7 +616,7 @@ export default function Reader() {
 
   // Mobile/Tablet: fixed bottom highlight bar that coexists with native selection UI
   const mobileHighlightBar = selection && (
-    <div className="fixed bottom-0 left-0 right-0 z-50 bg-surface border-t border-subtle shadow-[0_-4px_20px_rgba(0,0,0,0.5)] safe-area-bottom animate-slide-up">
+    <div className="highlight-popup fixed bottom-0 left-0 right-0 z-50 bg-surface border-t border-subtle shadow-[0_-4px_20px_rgba(0,0,0,0.5)] safe-area-bottom animate-slide-up">
       {/* Selected text preview */}
       <div className="px-4 pt-3 pb-1">
         <p className="text-xs text-muted truncate">
@@ -2956,7 +2956,9 @@ function FormattedSpan({ text, baseOffset }) {
       }
       rawOffset += 1 // skip [
       const linkText = linkMatch[2]
-      const linkUrl = linkMatch[3]
+      // Strip optional markdown title: url "title" → url
+      const rawLinkUrl = linkMatch[3]
+      const linkUrl = rawLinkUrl.replace(/\s+"[^"]*"$/, '')
       const linkOffset = track ? baseOffset + rawOffset : undefined
 
       // Categorize link types
@@ -3006,7 +3008,7 @@ function FormattedSpan({ text, baseOffset }) {
       }
       rawOffset += linkText.length
       rawOffset += 2 // skip ](
-      rawOffset += linkUrl.length
+      rawOffset += rawLinkUrl.length // use raw length (includes title) for offset tracking
       rawOffset += 1 // skip )
       remaining = remaining.slice(linkMatch[0].length)
       continue

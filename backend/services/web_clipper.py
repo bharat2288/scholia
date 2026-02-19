@@ -33,7 +33,7 @@ import asyncio
 from urllib.parse import urlparse, urljoin
 from unidecode import unidecode
 from bs4 import BeautifulSoup, NavigableString
-from markdownify import markdownify as md, MarkdownConverter
+from markdownify import markdownify as md, MarkdownConverter, chomp
 import logging
 
 logger = logging.getLogger(__name__)
@@ -202,6 +202,42 @@ class ScholiaMarkdownConverter(MarkdownConverter):
             result += f'[CAPTION] {alt}\n'
 
         return result
+
+    def convert_a(self, el, text, parent_tags):
+        """Convert links with proper URL resolution.
+
+        - Absolute URLs (http/https/mailto): pass through as-is
+        - Anchor-only links (#ref): resolve to full URL on the source page
+        - Relative links (/path, ../path): resolve against base_url
+        """
+        if '_noformat' in parent_tags:
+            return text
+
+        prefix, suffix, text = chomp(text)
+        if not text:
+            return ''
+
+        href = el.get('href')
+        if not href:
+            return text
+
+        # Resolve the URL
+        if href.startswith(('http://', 'https://', 'mailto:')):
+            # Already absolute — keep as-is
+            resolved = href
+        elif href.startswith('#'):
+            # Anchor link — point back to original page's anchor
+            resolved = self.base_url + href if self.base_url else href
+        else:
+            # Relative URL — resolve against base
+            base = self.base_url
+            if base and not base.endswith('/'):
+                base = base + '/'
+            resolved = urljoin(base, href) if base else href
+
+        title = el.get('title')
+        title_part = ' "%s"' % title.replace('"', r'\"') if title else ''
+        return '%s[%s](%s%s)%s' % (prefix, text, resolved, title_part, suffix)
 
     def _guess_extension(self, url: str) -> str:
         """Guess image extension from URL."""
