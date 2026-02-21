@@ -2206,10 +2206,10 @@ async def get_source_gluon_stats(source_id: str):
     source_type = row[2] or 'document'
     content_path = row[3]
 
-    # Check if local folder exists (for non-document sources)
+    # Check if local folder exists (any source type with a content_path)
     has_local_folder = False
     local_folder_path = None
-    if source_type != 'document' and content_path:
+    if content_path:
         content_file = Path(content_path)
         if content_file.exists():
             folder = content_file.parent
@@ -2250,7 +2250,7 @@ async def get_source_gluon_stats(source_id: str):
 async def delete_source(
     source_id: str,
     keep_gluons: bool = Query(False, description="If true, keep highlights/notes as orphans"),
-    delete_local_files: bool = Query(False, description="If true, delete local files for non-document sources")
+    delete_local_files: bool = Query(False, description="If true, delete the local extraction folder")
 ):
     """
     Delete a source.
@@ -2259,8 +2259,7 @@ async def delete_source(
         source_id: The source to delete
         keep_gluons: If true, highlights and notes will become orphans (source_id set to NULL).
                      If false (default), all gluons will be deleted with the source.
-        delete_local_files: If true and source_type is not 'document', delete the local folder
-                           containing the source files (extracted text, media, etc.).
+        delete_local_files: If true, delete the local folder containing extracted text, media, etc.
     """
     db = await get_db()
 
@@ -2312,7 +2311,7 @@ async def delete_source(
     # Delete local files if requested (non-document sources only)
     local_files_deleted = False
     deleted_folder = None
-    if delete_local_files and source_type != 'document' and content_path:
+    if delete_local_files and content_path:
         try:
             import shutil
             content_file = Path(content_path)

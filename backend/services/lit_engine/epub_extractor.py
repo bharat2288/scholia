@@ -43,7 +43,7 @@ def extract_epub(
         figures_dir = output_dir / "figures"
 
     try:
-        book = epub.read_epub(str(file_path), options={"ignore_ncx": True})
+        book = epub.read_epub(str(file_path))
 
         # Extract Dublin Core metadata
         metadata = {
@@ -56,6 +56,10 @@ def extract_epub(
 
         # Extract images from EPUB and build href -> filename map
         image_map = _extract_images(book, figures_dir)
+
+        # Extract TOC for section detection (handles non-semantic headings)
+        toc_entries = _extract_toc(book)
+        toc_lookup = _build_toc_lookup(toc_entries)
 
         # Build full text from spine items
         parts: list[str] = []
@@ -73,15 +77,37 @@ def extract_epub(
                 spine_items.append(item)
 
         for item in spine_items:
+            item_name = item.get_name()
+
+            # Find TOC entries for this spine item
+            item_toc = _get_toc_for_item(item_name, toc_lookup)
+
+            # Separate whole-chapter entries from fragment-targeted entries
+            chapter_sections: list[tuple[str, int]] = []
+            fragment_entries: dict[str, tuple[str, int]] = {}
+            for t in item_toc:
+                if t["fragment"]:
+                    fragment_entries[t["fragment"]] = (t["title"], t["level"])
+                else:
+                    chapter_sections.append((t["title"], t["level"]))
+
             html_content = item.get_content().decode("utf-8", errors="replace")
             soup = BeautifulSoup(html_content, "html.parser")
             body = soup.find("body") or soup
 
+            # Inject heading tags where TOC points to non-heading elements
+            _inject_toc_headings(soup, body, fragment_entries)
+
             # Convert HTML to Scholia-formatted text
-            chapter_text = _html_to_scholia(body, item.get_name(), image_map)
+            chapter_text = _html_to_scholia(body, item_name, image_map)
             chapter_text = chapter_text.strip()
 
             if chapter_text:
+                # Prepend whole-chapter TOC section if headings didn't already catch it
+                if chapter_sections and not chapter_text.startswith("[SECTION]"):
+                    sec_title, sec_level = chapter_sections[0]
+                    marker = "#" * sec_level
+                    chapter_text = f"[SECTION] {marker} {sec_title}\n\n{chapter_text}"
                 parts.append(chapter_text)
 
         # Assemble final text
@@ -149,6 +175,122 @@ def _extract_year(book: epub.EpubBook) -> Optional[int]:
     except Exception:
         pass
     return None
+
+
+def _extract_toc(book: epub.EpubBook) -> list[dict]:
+    """
+    Extract a flat list of TOC entries with hierarchy levels from the EPUB navigation.
+
+    Handles both EPUB2 (NCX) and EPUB3 (nav document) via ebooklib's book.toc.
+    Returns list of {title, href, level} dicts.
+    """
+    toc_entries: list[dict] = []
+
+    def _flatten(items: list, level: int = 1) -> None:
+        for item in items:
+            if isinstance(item, epub.Link):
+                if item.title and item.href:
+                    toc_entries.append({
+                        "title": item.title.strip(),
+                        "href": item.href,
+                        "level": level,
+                    })
+            elif isinstance(item, (tuple, list)) and len(item) == 2:
+                section, children = item
+                if hasattr(section, "href") and section.href:
+                    toc_entries.append({
+                        "title": (section.title or "").strip(),
+                        "href": section.href,
+                        "level": level,
+                    })
+                _flatten(children, level + 1)
+
+    try:
+        _flatten(book.toc)
+    except Exception:
+        pass
+
+    return toc_entries
+
+
+def _build_toc_lookup(toc_entries: list[dict]) -> dict[str, list[dict]]:
+    """
+    Build a lookup from item href (no fragment) to TOC entries for that item.
+
+    Returns: {item_href: [{fragment, title, level}, ...]}
+    """
+    lookup: dict[str, list[dict]] = {}
+    for entry in toc_entries:
+        href = entry["href"]
+        if not href:
+            continue
+        if "#" in href:
+            item_href, fragment = href.split("#", 1)
+        else:
+            item_href, fragment = href, None
+
+        lookup.setdefault(item_href, []).append({
+            "fragment": fragment,
+            "title": entry["title"],
+            "level": entry["level"],
+        })
+    return lookup
+
+
+def _get_toc_for_item(item_name: str, toc_lookup: dict[str, list[dict]]) -> list[dict]:
+    """
+    Find TOC entries matching a spine item, with fallback to filename-only matching.
+
+    EPUB TOC hrefs and item names may use different path prefixes
+    (e.g. "Text/ch01.xhtml" vs "OEBPS/Text/ch01.xhtml").
+    """
+    # Direct match
+    if item_name in toc_lookup:
+        return toc_lookup[item_name]
+
+    # Fallback: match by filename
+    item_basename = PurePosixPath(item_name).name
+    for key in toc_lookup:
+        key_basename = PurePosixPath(key.split("#")[0]).name
+        if key_basename == item_basename:
+            return toc_lookup[key]
+
+    return []
+
+
+def _inject_toc_headings(
+    soup: BeautifulSoup,
+    body: Tag,
+    fragment_entries: dict[str, tuple[str, int]],
+) -> None:
+    """
+    Inject heading tags for TOC entries that reference non-heading elements by ID.
+
+    When an EPUB uses <p class="heading"> instead of <h1>, the TOC still knows
+    which elements are headings via fragment IDs. This function finds those elements
+    and inserts proper <h1>-<h6> tags so the existing converter picks them up.
+    """
+    for frag_id, (title, level) in fragment_entries.items():
+        target = body.find(id=frag_id) or soup.find(id=frag_id)
+        if target is None:
+            continue
+
+        # Already a heading tag — the converter handles these natively
+        if isinstance(target, Tag) and target.name.lower() in HEADING_TAGS:
+            continue
+
+        # Inject a heading element before the target
+        heading_tag_name = f"h{min(level, 6)}"
+        new_heading = soup.new_tag(heading_tag_name)
+        new_heading.string = title
+        target.insert_before(new_heading)
+
+        # If the target just contains the heading text, remove to avoid duplication
+        if isinstance(target, Tag):
+            target_text = re.sub(r"\s+", " ", target.get_text(strip=True).lower())
+            toc_text = re.sub(r"\s+", " ", title.strip().lower())
+            if target_text == toc_text or target_text.startswith(toc_text):
+                target.decompose()
 
 
 def get_epub_metadata(file_path: Path) -> dict:

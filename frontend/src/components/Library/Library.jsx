@@ -1203,7 +1203,6 @@ function DeleteSourceModal({ sourceId, sourceTitle, onConfirm, onCancel }) {
   const [deleteLocalFiles, setDeleteLocalFiles] = useState(false)
 
   const hasAnnotations = stats && (stats.highlight_count > 0 || stats.note_count > 0)
-  const isNonDocument = stats?.source_type && stats.source_type !== 'document'
   const hasLocalFolder = stats?.has_local_folder
 
   // Handler that passes both keepGluons and deleteLocalFiles
@@ -1248,8 +1247,8 @@ function DeleteSourceModal({ sourceId, sourceTitle, onConfirm, onCancel }) {
           </p>
         )}
 
-        {/* Local files deletion option for non-document sources */}
-        {isNonDocument && hasLocalFolder && (
+        {/* Local files deletion option — shown when source has a local folder */}
+        {hasLocalFolder && (
           <label className="flex items-start gap-3 p-3 bg-raised rounded-lg mb-4 cursor-pointer hover:bg-elevated transition-colors">
             <input
               type="checkbox"
