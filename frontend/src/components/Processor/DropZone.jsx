@@ -20,6 +20,8 @@ function DropZone({ onFilesAdded }) {
 
     const files = Array.from(e.dataTransfer.files).filter(
       file => file.type === 'application/pdf'
+        || file.type === 'application/epub+zip'
+        || file.name.toLowerCase().endsWith('.epub')
     )
 
     if (files.length > 0) {
@@ -54,14 +56,14 @@ function DropZone({ onFilesAdded }) {
           </svg>
         </div>
         <p className="dropzone-text">
-          Drop PDF files here
+          Drop PDF or EPUB files here
         </p>
         <p className="dropzone-subtext">
           or <label className="dropzone-browse">
             browse
             <input
               type="file"
-              accept=".pdf"
+              accept=".pdf,.epub"
               multiple
               onChange={handleFileSelect}
               hidden

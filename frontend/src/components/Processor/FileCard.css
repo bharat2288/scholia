@@ -536,3 +536,69 @@
   background: var(--bg-elevated);
   color: var(--text-primary);
 }
+
+/* EPUB metadata preview */
+.epub-metadata {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.epub-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.epub-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.epub-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.epub-field-input {
+  background: var(--bg-base);
+  border: 1px solid var(--bg-raised);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--text-primary);
+  font-size: 14px;
+  transition: border-color 0.2s ease;
+}
+
+.epub-field-input:focus {
+  outline: none;
+  border-color: var(--accent-camel);
+}
+
+.epub-field-row {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+}
+
+.epub-field-row .epub-field {
+  flex: 0 0 120px;
+}
+
+.epub-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-tertiary);
+  padding-bottom: 8px;
+}
+
+.epub-stats-sep {
+  color: var(--text-muted);
+}

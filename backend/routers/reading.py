@@ -723,23 +723,20 @@ async def get_web_figure(source_id: str, filename: str):
 
     content_path, source_type = row
 
-    # Allow web, thread, and media source types
-    if source_type not in ('web', 'thread', 'media'):
-        raise HTTPException(
-            status_code=400,
-            detail="This endpoint is for web, thread, or media sources only"
-        )
-
-    # Get the source folder from content_path
-    source_folder = Path(content_path).parent
-
     # Security: validate filename (prevent path traversal)
     if '/' in filename or '\\' in filename or '..' in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
+    # Get the source folder from content_path
+    source_folder = Path(content_path).parent
+
     # Different source types store media in different subfolders
     if source_type == 'thread':
         figure_path = source_folder / "media" / filename
+    elif source_type == 'document':
+        # EPUB and other document sources: figures/ inside the method folder
+        # content_path points to the extracted.txt inside the method folder
+        figure_path = source_folder / "figures" / filename
     else:
         # web and media sources use figures/ subfolder
         figure_path = source_folder / "figures" / filename

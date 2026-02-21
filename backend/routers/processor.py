@@ -329,9 +329,9 @@ def _sync_import_source(folder_name: str, tier: str):
 
         # Index in FTS
         cursor.execute("""
-            INSERT INTO sources_fts (rowid, title, author_display, full_text)
-            SELECT rowid, title, author_display, ? FROM sources WHERE id = ?
-        """, [content, source_id])
+            INSERT INTO sources_fts (rowid, title, author_display)
+            SELECT rowid, title, author_display FROM sources WHERE id = ?
+        """, [source_id])
 
         conn.commit()
         return source_id
@@ -1206,4 +1206,270 @@ async def resume_job(temp_id: str, tier: str = "marker", background_tasks: Backg
         "status": "queued",
         "temp_id": temp_id,
         "queue_position": processing_queue.qsize()
+    }
+
+
+# =============================================================================
+# EPUB Endpoints
+# =============================================================================
+
+@router.post("/assess-epub")
+async def assess_epub(file: UploadFile = File(...)):
+    """
+    Upload and assess an EPUB file. Returns metadata and chapter/image counts.
+    No tier selection needed — EPUB extraction is fast and deterministic.
+    """
+    temp_id = str(uuid.uuid4())[:8]
+    temp_path = UPLOAD_DIR / f"{temp_id}_{file.filename}"
+
+    try:
+        contents = await file.read()
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: temp_path.write_bytes(contents))
+
+        # Quick metadata extraction (no full text processing)
+        from services.lit_engine.epub_extractor import get_epub_metadata
+        info = await loop.run_in_executor(None, get_epub_metadata, temp_path)
+
+        # Check for existing extractions by title+author
+        existing = _check_existing_extractions(file.filename, str(temp_path))
+
+        return {
+            "temp_id": temp_id,
+            "filename": file.filename,
+            "file_type": "epub",
+            **info,
+            "existing_extractions": existing,
+        }
+
+    except Exception as e:
+        if temp_path.exists():
+            temp_path.unlink()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _sync_process_epub(temp_id: str, epub_path: Path, overrides: dict) -> dict:
+    """
+    Synchronously process an EPUB: extract text + images, import to library.
+    Runs in a thread pool since it does file I/O but no GPU work.
+    """
+    from services.lit_engine.epub_extractor import extract_epub, get_epub_metadata
+    from services.finalize_document import standardize_folder_name
+
+    # Get metadata for folder naming
+    info = get_epub_metadata(epub_path)
+    meta = info["metadata"]
+
+    # Apply overrides
+    title = overrides.get("title") or meta.get("title") or epub_path.stem
+    author = overrides.get("author") or meta.get("author") or "Unknown"
+    year = overrides.get("year") or meta.get("year")
+
+    # Build folder name in Scholia format: Author_Year_Title
+    year_str = str(year) if year else "XXXX"
+    raw_name = f"{author} ({year_str}) - {title}"
+    folder_name = standardize_folder_name(raw_name)
+
+    documents_dir = _get_documents_dir()
+    doc_folder = documents_dir / folder_name
+    method_folder = doc_folder / f"{folder_name}--epub"
+    doc_folder.mkdir(parents=True, exist_ok=True)
+    method_folder.mkdir(parents=True, exist_ok=True)
+
+    # Figures go into the method folder's figures/ subfolder
+    figures_dir = method_folder / "figures"
+
+    # Run extraction
+    result = extract_epub(epub_path, method_folder, figures_dir)
+
+    if not result["success"]:
+        return {"success": False, "error": result.get("error", "Extraction failed")}
+
+    # Copy original .epub to doc folder
+    epub_dest = doc_folder / f"{folder_name}.epub"
+    if not epub_dest.exists():
+        shutil.copy2(epub_path, epub_dest)
+
+    # Import to library database
+    source_id = _sync_import_epub_source(folder_name, result, str(epub_dest))
+
+    # Clean up upload
+    if epub_path.exists() and str(UPLOAD_DIR) in str(epub_path):
+        epub_path.unlink()
+
+    return {
+        "success": True,
+        "source_id": source_id,
+        "folder_name": folder_name,
+        "chapter_count": result["chapter_count"],
+        "image_count": result["image_count"],
+    }
+
+
+def _sync_import_epub_source(folder_name: str, extraction_result: dict, epub_path_str: str) -> str:
+    """Import an extracted EPUB into the library database."""
+    import sqlite3
+    import hashlib
+
+    db_path = DATA_DIR / "library.db"
+    txt_path = extraction_result["text_path"]
+    content = Path(txt_path).read_text(encoding="utf-8")
+    now = datetime.now().isoformat()
+    sections = extraction_result["sections"]
+    meta = extraction_result["metadata"]
+
+    # Compute hash of the epub file for duplicate detection
+    epub_hash = None
+    if Path(epub_path_str).exists():
+        sha256 = hashlib.sha256()
+        with open(epub_path_str, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                sha256.update(chunk)
+        epub_hash = sha256.hexdigest()
+
+    # Parse author/year/title from folder name
+    parts = folder_name.split("_")
+    author = None
+    year = None
+    title = folder_name
+
+    year_idx = None
+    for i, part in enumerate(parts):
+        if re.match(r"^\d{4}$", part):
+            year_idx = i
+            year = int(part)
+            break
+
+    if year_idx is not None:
+        author = " ".join(parts[:year_idx])
+        title = " ".join(parts[year_idx + 1:])
+
+    # Use metadata title/author if available (more accurate)
+    if meta.get("title"):
+        title = meta["title"]
+    if meta.get("author"):
+        author = meta["author"]
+    if meta.get("year"):
+        year = meta["year"]
+
+    metadata_json = json.dumps({
+        "original_path": epub_path_str,
+        "extraction_method": "epub",
+        "pdf_hash": epub_hash,  # reuse field name for consistency
+        "publisher": meta.get("publisher"),
+        "language": meta.get("language"),
+    })
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cursor = conn.cursor()
+
+        # Check for existing source by original_path
+        cursor.execute("""
+            SELECT id FROM sources
+            WHERE json_extract(metadata, '$.original_path') = ?
+        """, (epub_path_str,))
+        existing = cursor.fetchone()
+
+        if existing:
+            source_id = existing[0]
+            cursor.execute("""
+                UPDATE sources
+                SET title = ?, author_display = ?, year = ?, content_path = ?,
+                    metadata = ?, updated_at = ?
+                WHERE id = ?
+            """, [title, author, year, txt_path, metadata_json, now, source_id])
+
+            # Re-index sections
+            cursor.execute("DELETE FROM sections WHERE source_id = ?", (source_id,))
+            cursor.execute(
+                "DELETE FROM sources_fts WHERE rowid = (SELECT rowid FROM sources WHERE id = ?)",
+                (source_id,),
+            )
+            print(f"Updated EPUB source: {folder_name} (id: {source_id})")
+        else:
+            source_id = str(uuid.uuid4())[:8]
+            cursor.execute("""
+                INSERT INTO sources (id, title, source_type, author_display, year,
+                                     content_path, metadata, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, [source_id, title, "document", author, year,
+                  txt_path, metadata_json, now, now])
+            print(f"Imported EPUB source: {folder_name} (id: {source_id})")
+
+        # Insert sections
+        for i, section in enumerate(sections):
+            section_id = f"{source_id}-s{i}"
+            cursor.execute("""
+                INSERT INTO sections (id, source_id, title, level, start_offset,
+                                      end_offset, order_index, parent_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, [section_id, source_id, section["title"], section["level"],
+                  section["start_offset"], section["end_offset"], i, None])
+
+        # FTS index
+        cursor.execute("""
+            INSERT INTO sources_fts (rowid, title, author_display)
+            SELECT rowid, title, author_display FROM sources WHERE id = ?
+        """, [source_id])
+
+        conn.commit()
+        return source_id
+
+    except Exception as e:
+        print(f"Error importing EPUB source: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+    finally:
+        conn.close()
+
+
+@router.post("/process-epub")
+async def process_epub(
+    temp_id: str,
+    title: Optional[str] = None,
+    author: Optional[str] = None,
+    year: Optional[int] = None,
+):
+    """
+    Process a previously uploaded EPUB file.
+    EPUB extraction is fast (no GPU), so runs synchronously in thread pool.
+
+    Args:
+        temp_id: The temp_id returned from /assess-epub
+        title: Optional title override
+        author: Optional author override
+        year: Optional year override
+    """
+    # Find the uploaded file
+    matches = list(UPLOAD_DIR.glob(f"{temp_id}_*"))
+    if not matches:
+        raise HTTPException(status_code=404, detail=f"No file found for temp_id: {temp_id}")
+
+    epub_path = matches[0]
+    overrides = {}
+    if title:
+        overrides["title"] = title
+    if author:
+        overrides["author"] = author
+    if year:
+        overrides["year"] = year
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        _sync_process_epub,
+        temp_id,
+        epub_path,
+        overrides,
+    )
+
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Processing failed"))
+
+    return {
+        "status": "complete",
+        "temp_id": temp_id,
+        **result,
     }

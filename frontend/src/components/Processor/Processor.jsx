@@ -362,12 +362,21 @@ function Processor() {
     }
   }, [runpodConfigured]) // Note: don't include fetchRunpodJobs to avoid infinite loop
 
+  // Detect file type from file object
+  const getFileType = useCallback((file) => {
+    if (file.type === 'application/epub+zip' || file.name.toLowerCase().endsWith('.epub')) {
+      return 'epub'
+    }
+    return 'pdf'
+  }, [])
+
   // Handle files dropped or selected
   const handleFilesAdded = useCallback(async (newFiles) => {
     const fileEntries = newFiles.map(file => ({
       id: crypto.randomUUID(),
       file,
       name: file.name,
+      fileType: getFileType(file),
       status: 'assessing',
       assessment: null,
       selectedTier: null,
@@ -382,7 +391,12 @@ function Processor() {
         const formData = new FormData()
         formData.append('file', entry.file)
 
-        const response = await fetch(`${API_BASE}/processor/assess`, {
+        // Use different endpoint for EPUB vs PDF
+        const assessUrl = entry.fileType === 'epub'
+          ? `${API_BASE}/processor/assess-epub`
+          : `${API_BASE}/processor/assess`
+
+        const response = await fetch(assessUrl, {
           method: 'POST',
           body: formData
         })
@@ -399,7 +413,8 @@ function Processor() {
                 ...f,
                 status: 'ready',
                 assessment,
-                selectedTier: assessment.recommendation
+                // EPUBs don't need tier selection
+                selectedTier: entry.fileType === 'epub' ? 'epub' : assessment.recommendation
               }
             : f
         ))
@@ -411,7 +426,7 @@ function Processor() {
         ))
       }
     }
-  }, [])
+  }, [getFileType])
 
   // Handle tier selection change
   const handleTierChange = useCallback((fileId, tier) => {
@@ -476,7 +491,54 @@ function Processor() {
       return
     }
 
-    // Normal local processing
+    // EPUB processing — fast, no GPU queue needed
+    if (file.fileType === 'epub') {
+      setFiles(prev => prev.map(f =>
+        f.id === fileId ? { ...f, status: 'processing', progress: { percent: 50, stage: 'extracting' } } : f
+      ))
+
+      try {
+        const params = new URLSearchParams({ temp_id: file.assessment.temp_id })
+        // Pass metadata overrides if the user edited them
+        if (file.epubOverrides?.title) params.set('title', file.epubOverrides.title)
+        if (file.epubOverrides?.author) params.set('author', file.epubOverrides.author)
+        if (file.epubOverrides?.year) params.set('year', file.epubOverrides.year)
+
+        const response = await fetch(`${API_BASE}/processor/process-epub?${params}`, {
+          method: 'POST'
+        })
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}))
+          throw new Error(errData.detail || 'EPUB processing failed')
+        }
+
+        const result = await response.json()
+
+        // Invalidate documents query so Library view updates
+        queryClient.invalidateQueries({ queryKey: ['documents'] })
+
+        setFiles(prev => prev.map(f =>
+          f.id === fileId
+            ? {
+                ...f,
+                status: 'complete',
+                result: { folder_name: result.folder_name, source_id: result.source_id },
+                progress: null
+              }
+            : f
+        ))
+      } catch (err) {
+        setFiles(prev => prev.map(f =>
+          f.id === fileId
+            ? { ...f, status: 'error', error: err.message, progress: null }
+            : f
+        ))
+      }
+      return
+    }
+
+    // Normal PDF local processing
     setFiles(prev => prev.map(f =>
       f.id === fileId ? { ...f, status: 'starting', progress: { percent: 0, stage: 'starting' } } : f
     ))
@@ -515,7 +577,7 @@ function Processor() {
           : f
       ))
     }
-  }, [files, pollStatus, runpodConfigured, fetchRunpodJobs])
+  }, [files, pollStatus, runpodConfigured, fetchRunpodJobs, queryClient])
 
   // Handle cancel button click
   const handleCancel = useCallback(async (fileId) => {
@@ -552,6 +614,15 @@ function Processor() {
       console.error('Cancel error:', err)
     }
   }, [files, showToast])
+
+  // Handle EPUB metadata override from editable fields
+  const handleEpubOverride = useCallback((fileId, field, value) => {
+    setFiles(prev => prev.map(f =>
+      f.id === fileId
+        ? { ...f, epubOverrides: { ...f.epubOverrides, [field]: value } }
+        : f
+    ))
+  }, [])
 
   // Handle process all ready files
   const handleProcessAll = useCallback(() => {
@@ -626,7 +697,7 @@ function Processor() {
             <path d="M10 32 Q13 31, 16 32" stroke="#d4a574" strokeWidth="1" strokeLinecap="round" fill="none" opacity="0.7"/>
           </svg>
         </h1>
-        <p className="processor-subtitle">PDF extraction for academic literature</p>
+        <p className="processor-subtitle">PDF &amp; EPUB extraction for academic literature</p>
       </header>
 
       <main className="processor-main">
@@ -671,6 +742,7 @@ function Processor() {
               onProcess={handleProcess}
               onCancel={handleCancel}
               onRemove={handleRemove}
+              onEpubOverride={handleEpubOverride}
               runpodConfigured={runpodConfigured}
               onConfigureRunPod={() => setShowConfigModal(true)}
             />

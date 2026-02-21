@@ -4,8 +4,9 @@
 > Covers architecture, code paths, data flow, tool inventories, frontend components,
 > model catalog, cost tracking, quality safeguards, and gaps.
 >
-> **Last Updated:** 2026-02-18
+> **Last Updated:** 2026-02-19
 > **Status:** Implemented through Phase 5 (both tool-use and code-execution engines operational)
+> **Corrections:** 2026-02-19 — fixed tool count (29, not 28), model count (22, not 19), added claude-sonnet-46, added Section 14 (Decisions)
 
 ---
 
@@ -24,8 +25,9 @@
 11. [Quality Safeguards](#11-quality-safeguards)
 12. [Async-Sync Bridging (v2)](#12-async-sync-bridging-v2)
 13. [Spec vs Implementation Gap Analysis](#13-spec-vs-implementation-gap-analysis)
-14. [Key Lessons Learned](#14-key-lessons-learned)
-15. [File Inventory](#15-file-inventory)
+14. [Architectural Decisions (Knowledge Base)](#14-architectural-decisions-knowledge-base)
+15. [Key Lessons Learned](#15-key-lessons-learned)
+16. [File Inventory](#16-file-inventory)
 
 ---
 
@@ -48,7 +50,7 @@ Scholia implements **two parallel RLM engines** that coexist in the same UI, tog
 │  │  Claude tool_use    │         │  Orchestrator → Sub-LLM →     │    │
 │  │  API natively       │         │  Synthesis                    │    │
 │  │                     │         │                               │    │
-│  │  28 tools defined   │         │  Python exec() sandbox        │    │
+│  │  29 tools defined   │         │  Python exec() sandbox        │    │
 │  │  as JSON schemas    │         │  Docs as namespace variables  │    │
 │  └─────────┬───────────┘         └──────────────┬───────────────┘    │
 │            │                                     │                    │
@@ -80,7 +82,7 @@ In v1 (tool-use mode), documents are also kept out of context — the model acce
 |--------------------------|--------|-------------------|
 | Phase 1: Research Sessions (CRUD, source linking) | DONE | `routers/sessions.py` |
 | Phase 2: Smart Context Assembly | PARTIAL | `_assemble_context()` in `sessions.py` — simple concat, no priority extraction |
-| Phase 3: Structured Tools | DONE | `rlm_agent.py` + `rlm_tools.py` — 28 tools, full agent loop |
+| Phase 3: Structured Tools | DONE | `rlm_agent.py` + `rlm_tools.py` — 29 tools, full agent loop |
 | Phase 4: Sub-LLM Calls | DONE | `sub_query()` in v1, `llm_query()`/`llm_query_batch()` in v2 |
 | Phase 5: Full Python Sandbox | DONE | `rlm_v2_engine.py` — exec()-based code execution |
 
@@ -97,7 +99,7 @@ In v1 (tool-use mode), documents are also kept out of context — the model acce
 ```
 User query
     ↓
-Build messages + tool definitions (28 tools as JSON schemas)
+Build messages + tool definitions (29 tools as JSON schemas)
     ↓
 ┌─→ Call Claude with tools enabled (chat_with_tools)
 │       ↓
@@ -134,6 +136,8 @@ async def run_rlm_query_streaming(session_id, query, model_id, ...)  # Yields ev
 | Constant | Value | Purpose |
 |----------|-------|---------|
 | `MAX_TOOL_RESULT_LENGTH` | 10,000 chars | Truncates tool results to prevent context blowout |
+
+> **Note:** Tool count is **29** as of 2026-02-19 (see Section 4 for full inventory).
 
 ### System Prompt
 
@@ -274,7 +278,7 @@ Two pathways:
 
 ## 4. Tool & Function Inventories
 
-### v1 Tools (28 total, defined as Claude tool_use JSON schemas)
+### v1 Tools (29 total, defined as Claude tool_use JSON schemas)
 
 #### Library Tools (4)
 
@@ -345,7 +349,7 @@ Two pathways:
 | `extract_claims` | `(source_id, section_id?, start_offset?, end_offset?)` | Sub-LLM extracts claims as JSON array |
 | `extract_examples` | `(source_id, concept?)` | Sub-LLM finds examples as JSON array |
 
-### v2 Namespace Functions (11 total, injected into exec() namespace)
+### v2 Namespace Functions (12 total, injected into exec() namespace)
 
 | Function | Type | Notes |
 |----------|------|-------|
@@ -386,7 +390,7 @@ Two pathways:
 
 **File:** `backend/services/chat/config.py`
 
-### Available Models (19 total)
+### Available Models (22 total)
 
 #### Anthropic (Direct API)
 
@@ -394,6 +398,7 @@ Two pathways:
 |----|-------|-------------|----------------------|------------|
 | `claude-haiku` | `claude-3-5-haiku-20241022` | Claude 3.5 Haiku | $1.00 / $5.00 | sub |
 | `claude-sonnet` | `claude-sonnet-4-20250514` | Claude 4 Sonnet | $3.00 / $15.00 | orchestrator |
+| `claude-sonnet-46` | `claude-sonnet-4-6` | Claude Sonnet 4.6 | $3.00 / $15.00 | orchestrator, synthesis |
 | `claude-opus-45` | `claude-opus-4-5-20251101` | Claude Opus 4.5 | $15.00 / $75.00 | synthesis |
 | `claude-opus` | `claude-opus-4-6` | Claude Opus 4.6 | $15.00 / $75.00 | orchestrator, synthesis |
 
@@ -926,7 +931,7 @@ future.result(timeout=120)             ← Blocks the worker thread until
 | State serialization between sessions | **Not implemented** — state lost on restart |
 | Token budgeting | **Not implemented** — estimation only |
 | Semantic search integration | **Not implemented** |
-| Tool granularity | **Resolved:** 28 tools in v1, 11 functions in v2 |
+| Tool granularity | **Resolved:** 29 tools in v1, 11 functions in v2 |
 | Sub-LLM routing | **Resolved:** tier_hints system in model catalog |
 | Caching strategy | **Not implemented** — no caching of tool results or summaries |
 | Error handling in loop | **Resolved:** consecutive error limit (3) |
@@ -948,7 +953,33 @@ future.result(timeout=120)             ← Blocks the worker thread until
 
 ---
 
-## 14. Key Lessons Learned
+## 14. Architectural Decisions (Knowledge Base)
+
+Key RLM decisions logged to `knowledge.db` for cross-session recall. Query via `mcp__workflow__query_decisions(query="RLM")`.
+
+| KB ID | Decision | Choice | Rationale |
+|-------|----------|--------|-----------|
+| #20 | Research Sessions Architecture | RLM paradigm over RAG or simple concat | Documents as environment variables, not context. Handles 10M+ tokens, lower cost via Python filtering, dynamic chunking. |
+| #53 | Research responses as sources/gluons | **DEFERRED** | Ontological question: are AI research outputs reference material (sources), user thinking (gluons), or a queryable layer? Needs further design. |
+| #71 | Three-tier model split (v2) | Sonnet orchestrator → Haiku sub-LLM → Opus synthesis | Optimizes each role: latency (Sonnet ~3-5s), cost (Haiku bulk), quality (Opus polish). Opus unusable as orchestrator (20-40s/iter). |
+| #72 | exec()-based Python sandbox (v2) | exec() in worker thread with async bridging | Simplest option, full Python capability, zero infrastructure overhead. Personal-use security posture — no container isolation needed. |
+| #73 | Evidence trace as UI component | Persist raw_findings + stored_evidence + doc_reads in context_snapshot; surface via EvidenceTrace.jsx | Without intermediate artifacts, quality issues are invisible. Synthesis model sounds plausible regardless of input quality. Trace transforms debugging. |
+| #74 | Force-exploration safeguards | Reject premature FINAL_ANSWER (0 doc reads) + force code-writing in early iterations | LLMs skip document reads and answer from memory. Soft nudges insufficient — hard safeguards add 1-2 iterations but ensure grounded responses. |
+
+### Related Learnings (Knowledge Base)
+
+| KB ID | Learning | Key Insight |
+|-------|----------|-------------|
+| #6 | Documents as environment, not context | Load docs as strings in sandbox; Python filtering is free (no tokens), only use LLM for semantic understanding. |
+| #8 | RLM vs Fine-tuning vs RAG | Different problems, not competing solutions. Dynamic corpus with provenance → RLM. Internalized style → fine-tuning. Simple lookup → RAG. |
+| #24 | Orchestrator must be a strong coder | Weak coding models produce shallow loops or skip tool calls. Only frontier-tier coders should be offered as orchestrators. |
+| #25 | System prompt must aggressively push sub-LLM usage | Soft prompts led to 0 sub-queries. Must: make tool use the DEFAULT, provide batch code examples, state what NOT to do. |
+| #26 | Model updates silently break agent pipelines | Same prompt, same model ID, completely different behavior after API update. Build guardrails and evidence traces to detect degradation. |
+| #27 | Evidence trace is essential, not optional | Without it, no way to diagnose shallow responses. The final synthesis is the WORST place to diagnose quality — it's designed to sound good. |
+
+---
+
+## 15. Key Lessons Learned
 
 ### Opus Is Too Slow for Orchestration
 
@@ -982,7 +1013,7 @@ It's about **latency** (Sonnet is fast enough for iteration), **quality** (Opus 
 
 ---
 
-## 15. File Inventory
+## 16. File Inventory
 
 ### Backend
 

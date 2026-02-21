@@ -9,8 +9,9 @@ const TIERS = [
   { id: 'runpod', label: 'RunPod', desc: 'Cloud GPU (batch)', isRemote: true }
 ]
 
-function FileCard({ file, onTierChange, onProcess, onCancel, onRemove, runpodConfigured, onConfigureRunPod }) {
-  const { id, name, status, assessment, selectedTier, result, error, progress, startTime, queuePosition } = file
+function FileCard({ file, onTierChange, onProcess, onCancel, onRemove, onEpubOverride, runpodConfigured, onConfigureRunPod }) {
+  const { id, name, status, assessment, selectedTier, result, error, progress, startTime, queuePosition, fileType } = file
+  const isEpub = fileType === 'epub'
   const [elapsed, setElapsed] = useState(0)
   const [showAnnotationWarning, setShowAnnotationWarning] = useState(false)
 
@@ -50,7 +51,10 @@ function FileCard({ file, onTierChange, onProcess, onCancel, onRemove, runpodCon
           <span className="file-name">{name}</span>
           {assessment && (
             <span className="file-pages">
-              {assessment.page_count} page{assessment.page_count !== 1 ? 's' : ''}
+              {isEpub
+                ? `${assessment.chapter_count || 0} chapter${assessment.chapter_count !== 1 ? 's' : ''}`
+                : `${assessment.page_count} page${assessment.page_count !== 1 ? 's' : ''}`
+              }
             </span>
           )}
         </div>
@@ -76,7 +80,74 @@ function FileCard({ file, onTierChange, onProcess, onCancel, onRemove, runpodCon
         </div>
       )}
 
-      {status === 'ready' && assessment && (
+      {status === 'ready' && assessment && isEpub && (
+        <div className="file-card-body">
+          {/* EPUB metadata preview */}
+          <div className="epub-metadata">
+            <span className="label label--accent">EPUB</span>
+            <div className="epub-fields">
+              <div className="epub-field">
+                <span className="epub-field-label">Title</span>
+                <input
+                  className="epub-field-input"
+                  defaultValue={assessment.metadata?.title || ''}
+                  onChange={(e) => onEpubOverride?.(id, 'title', e.target.value)}
+                />
+              </div>
+              <div className="epub-field">
+                <span className="epub-field-label">Author</span>
+                <input
+                  className="epub-field-input"
+                  defaultValue={assessment.metadata?.author || ''}
+                  onChange={(e) => onEpubOverride?.(id, 'author', e.target.value)}
+                />
+              </div>
+              <div className="epub-field-row">
+                <div className="epub-field">
+                  <span className="epub-field-label">Year</span>
+                  <input
+                    className="epub-field-input"
+                    type="number"
+                    defaultValue={assessment.metadata?.year || ''}
+                    onChange={(e) => onEpubOverride?.(id, 'year', e.target.value)}
+                  />
+                </div>
+                <div className="epub-stats">
+                  <span>{assessment.chapter_count} chapter{assessment.chapter_count !== 1 ? 's' : ''}</span>
+                  <span className="epub-stats-sep">&middot;</span>
+                  <span>{assessment.image_count} image{assessment.image_count !== 1 ? 's' : ''}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Existing extraction warning */}
+          {assessment.existing_extractions?.match_type && (
+            <div className={`existing-warning existing-warning--${assessment.existing_extractions.match_type}`}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" /><polyline points="16 10 10 16 8 14" />
+              </svg>
+              <span>
+                {assessment.existing_extractions.match_type === 'exact'
+                  ? <>Exact duplicate: <strong>{assessment.existing_extractions.matched_title}</strong></>
+                  : assessment.existing_extractions.match_type === 'fuzzy'
+                  ? <>Similar document: <strong>{assessment.existing_extractions.matched_title}</strong></>
+                  : <>Already imported</>
+                }
+              </span>
+            </div>
+          )}
+
+          <button
+            className="btn-primary process-btn"
+            onClick={() => onProcess(id)}
+          >
+            Import EPUB
+          </button>
+        </div>
+      )}
+
+      {status === 'ready' && assessment && !isEpub && (
         <div className="file-card-body">
           {/* Existing extraction warning - shows match type */}
           {assessment.existing_extractions?.match_type && (
