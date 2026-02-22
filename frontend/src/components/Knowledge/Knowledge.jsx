@@ -290,16 +290,16 @@ function NoteCard({ note, onNavigate, onTagClick, onDelete, onOpenNote }) {
         </button>
       )}
 
-      {/* Main row: content left, tags right */}
-      <div className="flex items-start gap-4">
+      {/* Main row: content left, tags right (stacks on mobile) */}
+      <div className="flex flex-col sm:flex-row items-start gap-2 sm:gap-4">
         {/* Note content - takes remaining space */}
         <div className="flex-1 text-secondary min-w-0">
           <MarkdownPreview content={note.content} maxLength={200} navigateToRef={navigateToRef} />
         </div>
 
-        {/* Tags - right side, natural width, right-aligned */}
+        {/* Tags - right side on desktop, wraps below on mobile */}
         {tagList.length > 0 && (
-          <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+          <div className="flex flex-row sm:flex-col flex-wrap sm:items-end gap-1.5 flex-shrink-0">
             {tagList.map((tag) => (
               <Link
                 key={tag.id}
@@ -578,7 +578,7 @@ function PeoplePanel({ searchQuery }) {
           }
         </div>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
           {sortedPeople.map(person => (
             <div
               key={person.id}

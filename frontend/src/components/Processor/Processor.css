@@ -2,7 +2,8 @@
 
 .processor-page {
   min-height: 100vh;
-  padding: 32px;
+  padding: 16px;
+  padding-bottom: 80px; /* MobileNavBar clearance */
   max-width: 900px;
   margin: 0 auto;
 }
@@ -10,8 +11,9 @@
 /* Toast notification */
 .processor-toast {
   position: fixed;
-  top: 24px;
-  right: 24px;
+  top: 12px;
+  right: 12px;
+  left: 12px;
   padding: 12px 20px;
   border-radius: 8px;
   font-size: 14px;
@@ -52,13 +54,13 @@
 
 .processor-header {
   text-align: center;
-  margin-bottom: 48px;
+  margin-bottom: 32px;
 }
 
 .processor-header .back-link {
-  position: absolute;
-  left: 32px;
-  top: 32px;
+  position: static;
+  display: inline-flex;
+  margin-bottom: 16px;
 }
 
 .back-link {
@@ -78,7 +80,7 @@
 
 .processor-title {
   font-family: 'Fraunces', Georgia, serif;
-  font-size: 48px;
+  font-size: 32px;
   font-weight: 400;
   color: var(--text-primary);
   margin-bottom: 8px;
@@ -88,21 +90,18 @@
 }
 
 .hand-drawn-pages {
-  position: absolute;
-  top: -8px;
-  right: -52px;
-  opacity: 0.45;
+  display: none;
 }
 
 .processor-subtitle {
   color: var(--text-secondary);
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .processor-main {
   display: flex;
   flex-direction: column;
-  gap: 32px;
+  gap: 24px;
 }
 
 .queue-section {
@@ -113,8 +112,10 @@
 
 .queue-header {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
 }
 
 /* Label styles */
@@ -169,4 +170,48 @@
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+/* ─── Tablet (640px+) ─── */
+@media (min-width: 640px) {
+  .processor-page {
+    padding: 32px;
+    padding-bottom: 32px;
+  }
+
+  .processor-header {
+    margin-bottom: 48px;
+  }
+
+  .processor-header .back-link {
+    position: absolute;
+    left: 32px;
+    top: 32px;
+  }
+
+  .processor-title {
+    font-size: 48px;
+  }
+
+  .hand-drawn-pages {
+    display: block;
+    position: absolute;
+    top: -8px;
+    right: -52px;
+    opacity: 0.45;
+  }
+
+  .processor-subtitle {
+    font-size: 16px;
+  }
+
+  .processor-main {
+    gap: 32px;
+  }
+
+  .processor-toast {
+    top: 24px;
+    right: 24px;
+    left: auto;
+  }
 }

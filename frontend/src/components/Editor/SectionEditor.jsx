@@ -2,6 +2,8 @@ import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useRawText, useUpdateRawText, usePreviewSections, useRevertRawText } from '../../hooks/useApi'
 import { API_BASE } from '../../config'
+import useDeviceLayout from '../../hooks/useDeviceLayout'
+import Drawer from '../common/Drawer'
 import CodeMirror from '@uiw/react-codemirror'
 import { EditorView, ViewPlugin, Decoration, keymap } from '@codemirror/view'
 import { RangeSetBuilder } from '@codemirror/state'
@@ -185,26 +187,6 @@ function headingKeymapExtension() {
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 /**
- * Section Editor
- * ==============
- * Three-pane editor for fixing OCR errors in extracted text:
- * - Left: PDF viewer (reference)
- * - Center: Raw text editor with syntax highlighting
- * - Right: Live preview (section structure) + Issues panel
- *
- * Common fixes:
- * 1. Missing [SECTION] markers → text renders as body instead of heading
- * 2. Missing # after [SECTION] → marker present but no heading level
- * 3. Duplicate text → OCR grabbed same content twice
- *
- * Smart features:
- * - Detects [SECTION] without heading level (highlighted orange)
- * - Detects potential headings via heuristics
- * - Click-to-jump to issues
- * - Ctrl+1-6 to set heading level on current line
- */
-
-/**
  * Detect structure issues in the content
  */
 function detectStructureIssues(content) {
@@ -290,32 +272,19 @@ function detectStructureIssues(content) {
 }
 
 /**
- * Apply a fix to the content at a specific line
+ * Section Editor
+ * ==============
+ * Responsive multi-pane editor for fixing OCR errors in extracted text.
+ *
+ * Desktop (>1024px): Three-pane — PDF | Editor | Preview+Issues
+ * Tablet (640-1024px): Two-pane — Editor (65%) | Preview+Issues (35%), PDF in drawer
+ * Mobile (<640px): Editor only, PDF and Preview in bottom-sheet drawers
  */
-function applyFix(content, lineIndex, fixType, level = 2) {
-  const lines = content.split('\n')
-  const line = lines[lineIndex]
-
-  if (fixType === 'add_level') {
-    // Add heading level to existing [SECTION]
-    lines[lineIndex] = line.replace(
-      /\[SECTION\]\s*/,
-      `[SECTION] ${'#'.repeat(level)} `
-    )
-  } else if (fixType === 'make_section') {
-    // Convert line to a section
-    const trimmed = line.trim()
-    const indent = line.match(/^\s*/)[0]
-    lines[lineIndex] = `${indent}[SECTION] ${'#'.repeat(level)} ${trimmed}`
-  }
-
-  return lines.join('\n')
-}
-
 export default function SectionEditor() {
   const { id } = useParams()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
+  const layout = useDeviceLayout()
   const { data, isLoading, error, refetch } = useRawText(id)
   const updateRawText = useUpdateRawText()
   const revertRawText = useRevertRawText()
@@ -335,9 +304,13 @@ export default function SectionEditor() {
   const [issues, setIssues] = useState({ missingLevels: [], potentialHeadings: [] })
   const [showIssues, setShowIssues] = useState(true)
 
-  // Panel sizing (percentages)
+  // Panel sizing (percentages) — desktop only
   const [leftPanelWidth, setLeftPanelWidth] = useState(25)
   const [rightPanelWidth, setRightPanelWidth] = useState(30)
+
+  // Mobile/tablet drawer state
+  const [pdfDrawerOpen, setPdfDrawerOpen] = useState(false)
+  const [previewDrawerOpen, setPreviewDrawerOpen] = useState(false)
 
   // Refs for resizing and editor
   const containerRef = useRef(null)
@@ -419,9 +392,6 @@ export default function SectionEditor() {
   }, [])
 
   // Jump to a specific character offset (via CM6 dispatch + centered scroll).
-  // Double-dispatch: CM6 virtual rendering estimates heights for off-screen lines.
-  // First scroll gets close, triggering actual render of that region.
-  // Second scroll (after layout) lands precisely.
   const jumpToOffset = useCallback((charOffset) => {
     const view = editorViewRef.current
     if (!view) return
@@ -469,7 +439,7 @@ export default function SectionEditor() {
     }
   }, [pageMap])
 
-  // Navigate PDF iframe to current page (click-to-sync, avoids constant reloads)
+  // Navigate PDF iframe to current page
   const syncPdfToPage = useCallback(() => {
     if (!iframeRef.current || !pdfUrl || !currentPdfPage) return
     iframeRef.current.src = `${pdfUrl}#page=${currentPdfPage}`
@@ -485,7 +455,6 @@ export default function SectionEditor() {
     if (isNaN(offset)) return
 
     hasJumped.current = true
-    // Delay to ensure CM6 has processed the document and initial layout
     const timer = setTimeout(() => jumpToOffset(offset), 400)
     return () => clearTimeout(timer)
   }, [content, searchParams, jumpToOffset])
@@ -495,7 +464,7 @@ export default function SectionEditor() {
     const view = editorViewRef.current
     if (!view) return
 
-    const lineNum = issue.lineNumber // 1-indexed, matches CM6
+    const lineNum = issue.lineNumber
     if (lineNum < 1 || lineNum > view.state.doc.lines) return
 
     const line = view.state.doc.line(lineNum)
@@ -536,14 +505,13 @@ export default function SectionEditor() {
     }
   }, [id, content, isDirty, updateRawText])
 
-  // Revert to last saved version (undo last save)
+  // Revert to last saved version
   const handleRevert = useCallback(async () => {
     if (!window.confirm('Revert to the previous saved version? This cannot be undone.')) return
 
     setSaveStatus('saving')
     try {
       const result = await revertRawText.mutateAsync(id)
-      // Refetch to get restored content
       const refreshed = await refetch()
       if (refreshed.data?.content) {
         setContent(refreshed.data.content)
@@ -569,7 +537,7 @@ export default function SectionEditor() {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [handleSave])
 
-  // Panel resize handlers
+  // Panel resize handlers (desktop only)
   const startResize = useCallback((panel) => (e) => {
     e.preventDefault()
     isResizing.current = panel
@@ -586,11 +554,9 @@ export default function SectionEditor() {
     const percentage = (mouseX / containerWidth) * 100
 
     if (isResizing.current === 'left') {
-      // Resize left panel
       const newWidth = Math.min(Math.max(percentage, 15), 50)
       setLeftPanelWidth(newWidth)
     } else if (isResizing.current === 'right') {
-      // Resize right panel
       const newWidth = Math.min(Math.max(100 - percentage, 15), 50)
       setRightPanelWidth(newWidth)
     }
@@ -602,8 +568,11 @@ export default function SectionEditor() {
     document.removeEventListener('mouseup', stopResize)
   }, [handleMouseMove])
 
-  // Calculate center panel width
+  // Calculate center panel width (desktop)
   const centerPanelWidth = 100 - leftPanelWidth - rightPanelWidth
+
+  // Issue count for badge
+  const totalIssues = issues.missingLevels.length + issues.potentialHeadings.length
 
   if (isLoading) {
     return (
@@ -624,25 +593,101 @@ export default function SectionEditor() {
     )
   }
 
+  // ─── Shared sub-components ────────────────────────────────────────────────
+
+  const pdfPanel = (
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="px-3 py-2 border-b border-subtle flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="label text-camel text-xs">Original PDF</span>
+          {currentPdfPage && (
+            <button
+              onClick={syncPdfToPage}
+              className="text-xs text-muted hover:text-camel transition-colors px-1.5 py-0.5 rounded bg-base hover:bg-raised border border-elevated"
+              title="Sync PDF to editor cursor position"
+            >
+              p.{currentPdfPage} ↗
+            </button>
+          )}
+        </div>
+        {data?.original_path && (
+          <button
+            onClick={async () => {
+              try {
+                await fetch(`${API_BASE}/reading/${id}/open-original`, { method: 'POST' })
+              } catch (err) {
+                console.error('Failed to open PDF:', err)
+              }
+            }}
+            className="text-xs text-muted hover:text-camel transition-colors"
+          >
+            Open External
+          </button>
+        )}
+      </div>
+      <div className="flex-1 overflow-hidden">
+        {pdfUrl ? (
+          <iframe
+            ref={iframeRef}
+            src={pdfUrl}
+            className="w-full h-full border-0"
+            title="PDF Preview"
+          />
+        ) : (
+          <div className="flex items-center justify-center h-full text-muted text-sm">
+            No PDF available
+          </div>
+        )}
+      </div>
+    </div>
+  )
+
+  const issuesAndPreviewPanel = (
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <IssuesPanel
+        issues={issues}
+        showIssues={showIssues}
+        onToggle={() => setShowIssues(!showIssues)}
+        onJumpTo={jumpToLine}
+        onQuickFix={handleQuickFix}
+      />
+      <div className="flex-1 flex flex-col overflow-hidden border-t border-subtle">
+        <div className="px-3 py-2 border-b border-subtle flex items-center justify-between">
+          <span className="label text-camel text-xs">Section Preview</span>
+          <span className="text-xs text-muted">
+            {previewData?.sections_count || 0} sections
+          </span>
+        </div>
+        <SectionPreview
+          sections={previewData?.sections || []}
+          content={content}
+          onJumpTo={jumpToOffset}
+        />
+      </div>
+    </div>
+  )
+
   return (
     <div className="min-h-screen bg-base flex flex-col">
       {/* Header */}
-      <header className="bg-surface border-b border-subtle px-4 py-3 flex items-center justify-between flex-shrink-0">
-        <div className="flex items-center gap-4">
+      <header className="bg-surface border-b border-subtle px-3 py-2 sm:px-4 sm:py-3 flex items-center justify-between flex-shrink-0">
+        <div className="flex items-center gap-2 sm:gap-4 min-w-0">
           <Link
             to={`/read/${id}`}
-            className="text-muted hover:text-secondary text-sm flex items-center gap-1"
+            className="text-muted hover:text-secondary text-sm flex items-center gap-1 flex-shrink-0"
           >
-            ← Back to Reader
+            ←{layout !== 'mobile' && ' Back to Reader'}
           </Link>
-          <div className="w-px h-5 bg-elevated" />
-          <h1 className="font-display text-xl text-primary">{data?.title || 'Section Editor'}</h1>
+          <div className="w-px h-5 bg-elevated hidden sm:block" />
+          <h1 className="font-display text-lg sm:text-xl text-primary truncate">
+            {data?.title || 'Section Editor'}
+          </h1>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
           {/* Status indicator */}
           {isDirty && (
-            <span className="text-xs text-terra">Unsaved changes</span>
+            <span className="text-xs text-terra hidden sm:inline">Unsaved changes</span>
           )}
           {saveStatus === 'saving' && (
             <span className="text-xs text-secondary">Saving...</span>
@@ -654,11 +699,11 @@ export default function SectionEditor() {
             <span className="text-xs text-red-400">Save failed</span>
           )}
 
-          {/* Revert button */}
+          {/* Revert button — hidden on mobile to save space */}
           <button
             onClick={handleRevert}
             disabled={saveStatus === 'saving'}
-            className="px-3 py-1.5 rounded-md text-sm font-medium bg-raised text-secondary hover:text-primary hover:bg-elevated border border-elevated transition-all"
+            className="px-3 py-1.5 rounded-md text-sm font-medium bg-raised text-secondary hover:text-primary hover:bg-elevated border border-elevated transition-all hidden sm:block"
             title="Revert to previous saved version"
           >
             Revert
@@ -669,133 +714,227 @@ export default function SectionEditor() {
             onClick={handleSave}
             disabled={!isDirty || saveStatus === 'saving'}
             className={`
-              px-4 py-1.5 rounded-md text-sm font-medium transition-all
+              px-3 sm:px-4 py-1.5 rounded-md text-sm font-medium transition-all
               ${isDirty
                 ? 'bg-gradient-to-r from-camel to-terra text-base hover:shadow-lg hover:shadow-camel/30'
                 : 'bg-raised text-muted cursor-not-allowed'
               }
             `}
           >
-            Save (Ctrl+S)
+            {layout === 'mobile' ? 'Save' : 'Save (Ctrl+S)'}
           </button>
         </div>
       </header>
 
-      {/* Three-pane layout */}
-      <div
-        ref={containerRef}
-        className="flex-1 flex overflow-hidden"
-        style={{ height: 'calc(100vh - 57px)' }}
-      >
-        {/* Left: PDF Viewer */}
-        <div
-          className="bg-surface border-r border-subtle flex flex-col overflow-hidden"
-          style={{ width: `${leftPanelWidth}%` }}
-        >
-          <div className="px-3 py-2 border-b border-subtle flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="label text-camel text-xs">Original PDF</span>
-              {currentPdfPage && (
-                <button
-                  onClick={syncPdfToPage}
-                  className="text-xs text-muted hover:text-camel transition-colors px-1.5 py-0.5 rounded bg-base hover:bg-raised border border-elevated"
-                  title="Sync PDF to editor cursor position"
-                >
-                  p.{currentPdfPage} ↗
-                </button>
-              )}
-            </div>
-            {data?.original_path && (
+      {/* ─── Mobile: Editor only + floating toolbar + drawer toggles ─── */}
+      {layout === 'mobile' && (
+        <>
+          {/* Drawer toggles bar */}
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-surface/80 border-b border-subtle text-xs">
+            {pdfUrl && (
               <button
-                onClick={async () => {
-                  try {
-                    await fetch(`${API_BASE}/reading/${id}/open-original`, { method: 'POST' })
-                  } catch (err) {
-                    console.error('Failed to open PDF:', err)
-                  }
-                }}
-                className="text-xs text-muted hover:text-camel transition-colors"
+                onClick={() => setPdfDrawerOpen(true)}
+                className="px-2 py-1 rounded bg-raised text-tertiary hover:text-camel transition-colors"
               >
-                Open External
+                PDF
               </button>
             )}
+            <button
+              onClick={() => setPreviewDrawerOpen(true)}
+              className="px-2 py-1 rounded bg-raised text-tertiary hover:text-camel transition-colors flex items-center gap-1"
+            >
+              Preview
+              {totalIssues > 0 && (
+                <span className="px-1 py-0.5 rounded text-[9px] font-medium bg-orange-500/20 text-orange-400">
+                  {totalIssues}
+                </span>
+              )}
+            </button>
+            <span className="ml-auto text-muted">{content.length.toLocaleString()} chars</span>
+            {isDirty && <span className="w-2 h-2 rounded-full bg-terra" title="Unsaved" />}
           </div>
-          <div className="flex-1 overflow-hidden">
-            {pdfUrl ? (
-              <iframe
-                ref={iframeRef}
-                src={pdfUrl}
-                className="w-full h-full border-0"
-                title="PDF Preview"
-              />
-            ) : (
-              <div className="flex items-center justify-center h-full text-muted text-sm">
-                No PDF available
-              </div>
-            )}
-          </div>
-        </div>
 
-        {/* Left resize handle */}
-        <div
-          onMouseDown={startResize('left')}
-          className="w-1 bg-elevated hover:bg-camel/50 cursor-col-resize transition-colors flex-shrink-0"
-        />
-
-        {/* Center: Raw Text Editor */}
-        <div
-          className="flex flex-col overflow-hidden"
-          style={{ width: `${centerPanelWidth}%` }}
-        >
-          <div className="px-3 py-2 border-b border-subtle flex items-center justify-between bg-surface">
-            <span className="label text-camel text-xs">Raw Text</span>
-            <span className="text-xs text-muted">
-              {content.length.toLocaleString()} chars
-            </span>
-          </div>
-          <RawTextEditor
-            content={content}
-            onChange={handleContentChange}
-            editorViewRef={editorViewRef}
-            onCursorActivity={handleCursorActivity}
-          />
-        </div>
-
-        {/* Right resize handle */}
-        <div
-          onMouseDown={startResize('right')}
-          className="w-1 bg-elevated hover:bg-camel/50 cursor-col-resize transition-colors flex-shrink-0"
-        />
-
-        {/* Right: Issues + Section Preview */}
-        <div
-          className="bg-surface border-l border-subtle flex flex-col overflow-hidden"
-          style={{ width: `${rightPanelWidth}%` }}
-        >
-          {/* Issues Panel */}
-          <IssuesPanel
-            issues={issues}
-            showIssues={showIssues}
-            onToggle={() => setShowIssues(!showIssues)}
-            onJumpTo={jumpToLine}
-            onQuickFix={handleQuickFix}
-          />
-
-          {/* Section Preview */}
-          <div className="flex-1 flex flex-col overflow-hidden border-t border-subtle">
-            <div className="px-3 py-2 border-b border-subtle flex items-center justify-between">
-              <span className="label text-camel text-xs">Section Preview</span>
-              <span className="text-xs text-muted">
-                {previewData?.sections_count || 0} sections
-              </span>
-            </div>
-            <SectionPreview
-              sections={previewData?.sections || []}
+          {/* Editor */}
+          <div className="flex-1 overflow-hidden" style={{ height: 'calc(100vh - 100px)' }}>
+            <RawTextEditor
               content={content}
-              onJumpTo={jumpToOffset}
+              onChange={handleContentChange}
+              editorViewRef={editorViewRef}
+              onCursorActivity={handleCursorActivity}
             />
           </div>
+
+          {/* Floating heading toolbar */}
+          <MobileHeadingToolbar editorViewRef={editorViewRef} />
+
+          {/* PDF drawer */}
+          <Drawer isOpen={pdfDrawerOpen} onClose={() => setPdfDrawerOpen(false)} position="bottom">
+            <div className="h-[70vh]">{pdfPanel}</div>
+          </Drawer>
+
+          {/* Preview/Issues drawer */}
+          <Drawer isOpen={previewDrawerOpen} onClose={() => setPreviewDrawerOpen(false)} position="bottom">
+            <div className="h-[70vh]">{issuesAndPreviewPanel}</div>
+          </Drawer>
+        </>
+      )}
+
+      {/* ─── Tablet: Two-pane (Editor + Preview), PDF in drawer ─── */}
+      {layout === 'tablet' && (
+        <>
+          <div className="flex-1 flex overflow-hidden" style={{ height: 'calc(100vh - 57px)' }}>
+            {/* Editor (65%) */}
+            <div className="flex flex-col overflow-hidden" style={{ width: '65%' }}>
+              <div className="px-3 py-2 border-b border-subtle flex items-center justify-between bg-surface">
+                <div className="flex items-center gap-2">
+                  <span className="label text-camel text-xs">Raw Text</span>
+                  {pdfUrl && (
+                    <button
+                      onClick={() => setPdfDrawerOpen(true)}
+                      className="text-xs text-muted hover:text-camel transition-colors px-1.5 py-0.5 rounded bg-base hover:bg-raised border border-elevated"
+                    >
+                      Open PDF
+                    </button>
+                  )}
+                </div>
+                <span className="text-xs text-muted">
+                  {content.length.toLocaleString()} chars
+                </span>
+              </div>
+              <RawTextEditor
+                content={content}
+                onChange={handleContentChange}
+                editorViewRef={editorViewRef}
+                onCursorActivity={handleCursorActivity}
+              />
+            </div>
+
+            {/* Preview + Issues (35%) */}
+            <div
+              className="bg-surface border-l border-subtle flex flex-col overflow-hidden"
+              style={{ width: '35%' }}
+            >
+              {issuesAndPreviewPanel}
+            </div>
+          </div>
+
+          {/* PDF drawer */}
+          <Drawer isOpen={pdfDrawerOpen} onClose={() => setPdfDrawerOpen(false)} position="bottom">
+            <div className="h-[75vh]">{pdfPanel}</div>
+          </Drawer>
+        </>
+      )}
+
+      {/* ─── Desktop: Three-pane with resize handles (unchanged) ─── */}
+      {layout === 'desktop' && (
+        <div
+          ref={containerRef}
+          className="flex-1 flex overflow-hidden"
+          style={{ height: 'calc(100vh - 57px)' }}
+        >
+          {/* Left: PDF Viewer */}
+          <div
+            className="bg-surface border-r border-subtle flex flex-col overflow-hidden"
+            style={{ width: `${leftPanelWidth}%` }}
+          >
+            {pdfPanel}
+          </div>
+
+          {/* Left resize handle */}
+          <div
+            onMouseDown={startResize('left')}
+            className="w-1 bg-elevated hover:bg-camel/50 cursor-col-resize transition-colors flex-shrink-0"
+          />
+
+          {/* Center: Raw Text Editor */}
+          <div
+            className="flex flex-col overflow-hidden"
+            style={{ width: `${centerPanelWidth}%` }}
+          >
+            <div className="px-3 py-2 border-b border-subtle flex items-center justify-between bg-surface">
+              <span className="label text-camel text-xs">Raw Text</span>
+              <span className="text-xs text-muted">
+                {content.length.toLocaleString()} chars
+              </span>
+            </div>
+            <RawTextEditor
+              content={content}
+              onChange={handleContentChange}
+              editorViewRef={editorViewRef}
+              onCursorActivity={handleCursorActivity}
+            />
+          </div>
+
+          {/* Right resize handle */}
+          <div
+            onMouseDown={startResize('right')}
+            className="w-1 bg-elevated hover:bg-camel/50 cursor-col-resize transition-colors flex-shrink-0"
+          />
+
+          {/* Right: Issues + Section Preview */}
+          <div
+            className="bg-surface border-l border-subtle flex flex-col overflow-hidden"
+            style={{ width: `${rightPanelWidth}%` }}
+          >
+            {issuesAndPreviewPanel}
+          </div>
         </div>
+      )}
+    </div>
+  )
+}
+
+
+/**
+ * Mobile floating heading toolbar — 6 buttons for heading levels
+ * Positioned above keyboard area at bottom of screen
+ */
+function MobileHeadingToolbar({ editorViewRef }) {
+  const applyHeading = useCallback((level) => {
+    const view = editorViewRef.current
+    if (!view) return
+
+    const pos = view.state.selection.main.head
+    const line = view.state.doc.lineAt(pos)
+    const text = line.text
+    const trimmed = text.trim()
+
+    let newText
+    if (trimmed.startsWith('[SECTION]')) {
+      if (/\[SECTION\]\s*#{1,6}/.test(trimmed)) {
+        newText = text.replace(/\[SECTION\]\s*#{1,6}\s*/, `[SECTION] ${'#'.repeat(level)} `)
+      } else {
+        newText = text.replace(/\[SECTION\]\s*/, `[SECTION] ${'#'.repeat(level)} `)
+      }
+    } else if (trimmed && !trimmed.startsWith('[')) {
+      const indent = text.match(/^\s*/)[0]
+      newText = `${indent}[SECTION] ${'#'.repeat(level)} ${trimmed}`
+    }
+
+    if (newText !== undefined) {
+      view.dispatch({
+        changes: { from: line.from, to: line.to, insert: newText },
+      })
+    }
+    view.focus()
+  }, [editorViewRef])
+
+  return (
+    <div className="fixed bottom-16 left-0 right-0 z-30 flex justify-center px-4 pb-2 pointer-events-none">
+      <div className="flex gap-1 bg-surface/95 backdrop-blur-sm border border-subtle rounded-lg px-2 py-1.5 shadow-lg pointer-events-auto">
+        {[1, 2, 3, 4, 5, 6].map(level => (
+          <button
+            key={level}
+            onClick={() => applyHeading(level)}
+            className="w-8 h-8 rounded text-xs font-mono font-medium
+                       text-tertiary hover:text-camel hover:bg-camel/10
+                       active:bg-camel/20 transition-colors
+                       flex items-center justify-center"
+            title={`Heading ${level}`}
+          >
+            H{level}
+          </button>
+        ))}
       </div>
     </div>
   )
@@ -804,12 +943,6 @@ export default function SectionEditor() {
 
 /**
  * Raw Text Editor — CodeMirror 6
- *
- * Replaces the previous textarea+pre overlay with CM6 for:
- * - Reliable scroll-to-offset (via dispatch + scrollIntoView)
- * - Virtual rendering (only visible lines in DOM)
- * - Native syntax highlighting via decorations
- * - Built-in undo/redo history
  */
 function RawTextEditor({ content, onChange, editorViewRef, onCursorActivity }) {
   const extensions = useMemo(() => [
@@ -902,12 +1035,10 @@ function SectionPreview({ sections, content, onJumpTo }) {
  * Individual section preview item
  */
 function SectionPreviewItem({ section, index, content, onJumpTo }) {
-  // Extract a snippet of text after the section header
   const snippetLength = 100
   const startPos = section.start_offset || 0
   const endPos = section.end_offset || content.length
 
-  // Get text after the header line
   const sectionText = content.slice(startPos, endPos)
   const lines = sectionText.split('\n')
   const textAfterHeader = lines.slice(1).join(' ').trim().slice(0, snippetLength)
@@ -950,10 +1081,8 @@ function IssuesPanel({ issues, showIssues, onToggle, onJumpTo, onQuickFix }) {
   const [ignoredKeys, setIgnoredKeys] = useState(new Set())
   const [showIgnored, setShowIgnored] = useState(false)
 
-  // Create unique keys for issues
   const getIssueKey = (issue) => `${issue.lineNumber}-${issue.text.slice(0, 20)}`
 
-  // Filter active vs ignored issues
   const activeMissingLevels = issues.missingLevels.filter(i => !ignoredKeys.has(getIssueKey(i)))
   const activePotentialHeadings = issues.potentialHeadings.filter(i => !ignoredKeys.has(getIssueKey(i)))
   const ignoredIssues = [
@@ -1021,7 +1150,6 @@ function IssuesPanel({ issues, showIssues, onToggle, onJumpTo, onQuickFix }) {
             </p>
           ) : (
             <div className="p-2 space-y-1">
-              {/* Missing levels - more urgent */}
               {activeMissingLevels.map((issue, i) => (
                 <IssueItem
                   key={`missing-${i}`}
@@ -1032,8 +1160,6 @@ function IssuesPanel({ issues, showIssues, onToggle, onJumpTo, onQuickFix }) {
                   onIgnore={handleIgnore}
                 />
               ))}
-
-              {/* Potential headings - suggestions */}
               {activePotentialHeadings.map((issue, i) => (
                 <IssueItem
                   key={`potential-${i}`}
@@ -1122,7 +1248,6 @@ function IssueItem({ issue, type, onJumpTo, onQuickFix, onIgnore }) {
 
         {/* Action buttons */}
         <div className="flex items-center gap-1">
-          {/* Ignore button */}
           <button
             onClick={() => onIgnore(issue)}
             className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-neutral-500/20 text-neutral-400 hover:bg-neutral-500/30 transition-colors"
@@ -1131,7 +1256,6 @@ function IssueItem({ issue, type, onJumpTo, onQuickFix, onIgnore }) {
             Ignore
           </button>
 
-          {/* Quick fix button */}
           <div className="relative">
             <button
               onClick={() => setShowLevelPicker(!showLevelPicker)}
@@ -1146,7 +1270,6 @@ function IssueItem({ issue, type, onJumpTo, onQuickFix, onIgnore }) {
               Fix
             </button>
 
-            {/* Level picker dropdown */}
             {showLevelPicker && (
               <div className="absolute right-0 top-full mt-1 bg-elevated border border-subtle rounded shadow-lg z-10">
                 <div className="p-1 flex gap-0.5">
@@ -1170,7 +1293,6 @@ function IssueItem({ issue, type, onJumpTo, onQuickFix, onIgnore }) {
         </div>
       </div>
 
-      {/* Reason for suggestion */}
       {issue.reason && (
         <p className="text-muted mt-1 text-[10px]">
           Detected: {issue.reason}

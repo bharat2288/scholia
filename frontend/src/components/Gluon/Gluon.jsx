@@ -394,10 +394,10 @@ export default function Gluon() {
   const referencedBy = gluon.backlinks?.filter(b => b.link_type === 'reference') || []
 
   return (
-    <div className="min-h-screen bg-base">
+    <div className="min-h-screen bg-base pb-16 sm:pb-0">
       {/* Header */}
       <header className="border-b border-raised bg-surface">
-        <div className="max-w-4xl mx-auto px-8 py-6">
+        <div className="max-w-4xl mx-auto px-4 py-4 sm:px-8 sm:py-6">
           <div className="flex items-center justify-between mb-4">
             <button
               onClick={() => navigate(-1)}
@@ -433,7 +433,7 @@ export default function Gluon() {
 
                 {/* Confirm deletion */}
                 {deleteState === 'confirm' && (
-                  <div className="ml-auto flex items-center gap-2">
+                  <div className="ml-auto flex items-center gap-2 flex-wrap">
                     <span className="text-xs text-muted">Delete this {gluon.type}?</span>
                     <button
                       onClick={() => handleDelete(false)}
@@ -453,7 +453,7 @@ export default function Gluon() {
 
                 {/* Warning: tag has associations */}
                 {deleteState === 'warning' && (
-                  <div className="ml-auto flex items-center gap-2">
+                  <div className="ml-auto flex items-center gap-2 flex-wrap">
                     <span className="text-xs text-yellow-400">
                       ⚠ {associationCount} item{associationCount > 1 ? 's' : ''} tagged with this
                     </span>
@@ -491,7 +491,7 @@ export default function Gluon() {
               <div className="relative">
                 {gluon.type === 'highlight' ? (
                   // Highlights are read-only (extracted text from documents)
-                  <p className="text-xl text-primary leading-relaxed">
+                  <p className="text-lg sm:text-xl text-primary leading-relaxed">
                     {gluon.content || <span className="text-muted italic">Empty highlight</span>}
                   </p>
                 ) : isEditing ? (
@@ -529,7 +529,7 @@ export default function Gluon() {
                   >
                     {gluon.type === 'tag' ? (
                       // Tags display as large title
-                      <h1 className="font-display text-4xl text-primary">
+                      <h1 className="font-display text-2xl sm:text-4xl text-primary">
                         {gluon.content || <span className="text-muted italic">Click to add content...</span>}
                       </h1>
                     ) : (
@@ -576,7 +576,7 @@ export default function Gluon() {
       </header>
 
       {/* Main content */}
-      <main className="max-w-4xl mx-auto px-8 py-8">
+      <main className="max-w-4xl mx-auto px-4 py-6 sm:px-8 sm:py-8">
 
         {/* Attached To: show parent gluon if this note is attached to a highlight */}
         {gluon.parent_gluon && (
