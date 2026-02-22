@@ -8,13 +8,21 @@ Endpoints:
 - POST /webhook/whatsapp - Receive incoming messages
 - POST /webhook/capture  - Manual capture (testing without WhatsApp)
 
-Flow:
+Default Flow (any text without prefix):
 1. User sends message to WhatsApp number
 2. Meta sends webhook POST to this endpoint
 3. Classify using Gemini Flash (structured output)
 4. Match person refs to existing person gluons
 5. Create a journal entry with category tag + person links
 6. Send confirmation reply
+
+Commands:
+- ?help, ?h         → Show help menu
+- ?tasks, ?ideas    → Query entries by category
+- done: <task>      → Mark task complete
+- add: <entry> | <detail> → Append detail
+- delete: <entry>   → Delete entry
+- (any other text)  → Create journal entry (default)
 """
 
 import os
@@ -120,7 +128,11 @@ async def handle_webhook(request: Request):
 
         # Detect intent and route accordingly
         if text.startswith("?"):
-            await handle_query_intent(from_number, text)
+            # Check for help command
+            if text.lower() in ["?help", "?h"]:
+                await handle_help(from_number)
+            else:
+                await handle_query_intent(from_number, text)
         elif text.startswith("done:") or text.lower().startswith("done "):
             query_text = text[5:].strip() if text.startswith("done:") else text[4:].strip()
             await handle_mark_done(from_number, query_text)
@@ -131,7 +143,7 @@ async def handle_webhook(request: Request):
             query_text = text[7:].strip() if text.startswith("delete:") else text[6:].strip()
             await handle_delete_entry(from_number, query_text)
         else:
-            # Default: new capture
+            # Default: new journal entry capture (classification flow)
             await process_capture(from_number, text)
 
     return {"status": "ok", "processed": len(messages) + len(button_responses)}
@@ -570,9 +582,15 @@ def _parse_intent(text: str) -> tuple[str, str]:
     """
     Parse intent prefix from text. Returns (intent, remaining_text).
 
-    Intents: query (?), done, add, delete, or capture (default).
+    Intents: query (?), done, add, delete, help, or capture (default).
+
+    Default behavior: Any text without a prefix is captured as a journal entry.
+    No "add:" prefix required.
     """
     if text.startswith("?"):
+        # Help command
+        if text.lower() in ["?help", "?h"]:
+            return "help", text
         return "query", text
     elif text.startswith("done:") or text.lower().startswith("done "):
         remainder = text[5:].strip() if text.startswith("done:") else text[4:].strip()
@@ -584,6 +602,7 @@ def _parse_intent(text: str) -> tuple[str, str]:
         remainder = text[7:].strip() if text.startswith("delete:") else text[6:].strip()
         return "delete", remainder
     else:
+        # Default: capture as journal entry (no prefix required)
         return "capture", text
 
 
@@ -691,6 +710,48 @@ async def _send_reply(to: str, message: str):
         print(f"[WhatsApp REPLY (not sent)] {to}: {message}")
 
 
+async def handle_help(from_number: str):
+    """Send help menu listing all available commands."""
+    help_text = """📱 *Scholia WhatsApp Commands*
+
+*JOURNAL ENTRY (Default)*
+Just send any text to create a journal entry
+• "Call dentist tomorrow"
+• "Had coffee with Sarah"
+• "Look into spaced repetition"
+
+*QUERY ENTRIES*
+?tasks — List all tasks
+?tasks today — List today's tasks
+?ideas — List ideas
+?social — List social entries
+?admin — List admin entries
+?inbox — List inbox items
+
+*TASK MANAGEMENT*
+done: <task> — Mark task complete
+• "done: call dentist"
+
+*ENTRY MANAGEMENT*
+add: <entry> | <detail> — Add detail
+• "add: dentist | ask about pricing"
+
+delete: <entry> — Delete entry
+• "delete: call dentist"
+
+*LINKING & TAGGING*
+[[Name]] — Link to person/note
+##tag — Add category tag
+• "Finish [[project]] today ##urgent"
+
+*HELP*
+?help or ?h — Show this menu
+
+All text without a prefix automatically creates a journal entry."""
+
+    await _send_reply(from_number, help_text)
+
+
 async def handle_query_intent(from_number: str, query_text: str):
     result = await _do_query(query_text)
     await _send_reply(from_number, _format_query_reply(result))
@@ -782,11 +843,12 @@ async def manual_capture(request: ManualCaptureRequest):
     Manual capture endpoint for testing all WhatsApp intents without WhatsApp.
 
     Supports the same intent routing as WhatsApp webhook:
+    - ?help, ?h → show help menu
     - ?tasks, ?ideas today → query entries
     - done: <query> → mark task complete
     - add: <query> | <detail> → append detail
     - delete: <query> → find entry for deletion
-    - anything else → classify and create journal entries
+    - anything else → classify and create journal entries (no "add:" prefix needed)
     """
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="Text is required")
@@ -795,7 +857,12 @@ async def manual_capture(request: ManualCaptureRequest):
 
     intent, remainder = _parse_intent(text)
 
-    if intent == "query":
+    if intent == "help":
+        return {
+            "intent": "help",
+            "message": "Help menu would be displayed in WhatsApp. See handle_help() for content."
+        }
+    elif intent == "query":
         return await _do_query(remainder)
     elif intent == "done":
         return await _do_mark_done(remainder)

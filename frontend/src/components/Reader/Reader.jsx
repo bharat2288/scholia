@@ -196,6 +196,23 @@ export default function Reader() {
   const [tocDrawerOpen, setTocDrawerOpen] = useState(false)
   const [sidebarDrawerOpen, setSidebarDrawerOpen] = useState(false)
 
+  // Tablet sidebar visibility (persisted)
+  const [tabletSidebarVisible, setTabletSidebarVisible] = useState(() => {
+    try {
+      const stored = localStorage.getItem('scholia-tablet-sidebar')
+      return stored ? JSON.parse(stored) : false
+    } catch (e) {
+      return false
+    }
+  })
+
+  // Persist tablet sidebar preference
+  useEffect(() => {
+    try {
+      localStorage.setItem('scholia-tablet-sidebar', JSON.stringify(tabletSidebarVisible))
+    } catch (e) {}
+  }, [tabletSidebarVisible])
+
   // Resizable pane widths
   const { tocWidth, sidebarWidth, handleTocResize, handleSidebarResize, isResizing } = useResizable()
 
@@ -713,6 +730,9 @@ export default function Reader() {
     selection,
     isChatExpanded,
     setIsChatExpanded,
+    tabletSidebarVisible,
+    setTabletSidebarVisible,
+    layout,
     initialConversationId
   }
 
@@ -790,21 +810,25 @@ export default function Reader() {
   }
 
   // =============================================
-  // TABLET LAYOUT: two-pane (content 70% + sidebar 30%)
+  // TABLET LAYOUT: full-width reading with toggleable sidebar
   // =============================================
   if (layout === 'tablet') {
     return (
       <div className="h-screen bg-base flex">
-        {/* Content pane — 70% */}
+        {/* Reading pane - full width when sidebar hidden */}
         <main
           ref={contentRef}
-          className="flex-[7] h-full overflow-auto relative"
+          className={`h-full overflow-auto relative transition-all duration-300 ${
+            tabletSidebarVisible ? 'flex-[65]' : 'flex-1'
+          }`}
           onMouseUp={handleMouseUp}
           onTouchEnd={handleTouchEnd}
         >
-          {/* Sticky nav with ToC hamburger */}
+          {/* Sticky nav with ToC hamburger and sidebar toggle */}
           <div className="sticky top-0 z-10 bg-base/95 backdrop-blur-sm border-b border-subtle/50">
-            <div className="max-w-3xl mx-auto px-6 py-3 flex items-center justify-between">
+            <div className={`mx-auto px-6 py-3 flex items-center justify-between transition-all duration-300 ${
+              tabletSidebarVisible ? 'max-w-2xl' : 'max-w-4xl'
+            }`}>
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => setTocDrawerOpen(true)}
@@ -829,7 +853,12 @@ export default function Reader() {
             </div>
           </div>
 
-          <div className="max-w-3xl mx-auto px-6 py-8">
+          {/* Reading content - wider max-width and padding when sidebar hidden */}
+          <div className={`mx-auto py-8 transition-all duration-300 ${
+            tabletSidebarVisible
+              ? 'max-w-2xl px-6'    // Narrower when sidebar visible
+              : 'max-w-4xl px-12'   // Wider with generous padding when full-width
+          }`}>
             {documentBody}
           </div>
         </main>
@@ -837,9 +866,26 @@ export default function Reader() {
         {/* Bottom highlight bar for tablet touch */}
         {mobileHighlightBar}
 
-        {/* Sidebar pane — 30%, always visible */}
-        <div className="flex-[3] h-full border-l border-subtle">
-          <ReaderSidebar {...sidebarProps} />
+        {/* Floating toggle button - only visible when sidebar is hidden */}
+        {!tabletSidebarVisible && (
+          <button
+            onClick={() => setTabletSidebarVisible(true)}
+            className="fixed right-4 bottom-20 z-20 p-3 bg-raised border border-subtle rounded-full shadow-lg text-secondary hover:text-primary hover:bg-surface transition-all"
+            title="Show annotations & chat"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+        )}
+
+        {/* Sidebar - slide in from right, hidden by default */}
+        <div
+          className={`h-full border-l border-subtle transition-all duration-300 ${
+            tabletSidebarVisible ? 'flex-[35] opacity-100' : 'w-0 opacity-0 overflow-hidden'
+          }`}
+        >
+          {tabletSidebarVisible && <ReaderSidebar {...sidebarProps} />}
         </div>
 
         {/* ToC drawer (left) */}
@@ -916,7 +962,7 @@ export default function Reader() {
 /**
  * Reader Sidebar with tabs: Annotations (unified), Chat, Info
  */
-function ReaderSidebar({ sourceId, documentData, highlights, onHighlightClick, onHighlightDelete, content, selection, isChatExpanded, setIsChatExpanded, initialConversationId }) {
+function ReaderSidebar({ sourceId, documentData, highlights, onHighlightClick, onHighlightDelete, content, selection, isChatExpanded, setIsChatExpanded, tabletSidebarVisible, setTabletSidebarVisible, layout, initialConversationId }) {
   // Auto-switch to Chat tab when deep linking to a conversation
   const [activeTab, setActiveTab] = useState(initialConversationId ? 'chat' : 'annotations')
   const [copiedAll, setCopiedAll] = useState(false)
@@ -985,13 +1031,24 @@ function ReaderSidebar({ sourceId, documentData, highlights, onHighlightClick, o
           </button>
         ))}
 
-        {/* Expand/collapse button - always in header so accessible from any tab */}
+        {/* Expand/collapse button - behavior depends on layout */}
         <button
-          onClick={() => setIsChatExpanded(!isChatExpanded)}
+          onClick={() => {
+            if (layout === 'tablet') {
+              setTabletSidebarVisible(!tabletSidebarVisible)
+            } else {
+              // Desktop: expand/collapse sidebar
+              setIsChatExpanded(!isChatExpanded)
+            }
+          }}
           className="px-3 py-3 text-muted hover:text-secondary transition-colors border-l border-subtle"
-          title={isChatExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
+          title={
+            layout === 'tablet'
+              ? (tabletSidebarVisible ? 'Hide sidebar' : 'Show sidebar')
+              : (isChatExpanded ? 'Collapse sidebar' : 'Expand sidebar')
+          }
         >
-          {isChatExpanded ? (
+          {(layout === 'tablet' ? tabletSidebarVisible : isChatExpanded) ? (
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
