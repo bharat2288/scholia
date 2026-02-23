@@ -35,6 +35,7 @@ def build_system_prompt(
         "thread": "a social media thread",
         "media": "a video or podcast transcript",
         "note": "a personal/project note",
+        "repo": "a GitHub code repository",
     }
     type_desc = type_descriptions.get(source_type, "a document")
     title_clause = f' titled "{source_title}"' if source_title else ""

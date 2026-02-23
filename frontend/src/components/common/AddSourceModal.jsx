@@ -7,7 +7,7 @@
  */
 
 import { useState, useMemo, useRef } from 'react'
-import { useClipUrl, useClipTweet, useClipVideo, usePreviewNote, useImportNote, useFindOrCreateTags, useFindOrCreatePeople } from '../../hooks/useApi'
+import { useClipUrl, useClipTweet, useClipVideo, useTriageRepo, useClipRepo, usePreviewNote, useImportNote, useFindOrCreateTags, useFindOrCreatePeople } from '../../hooks/useApi'
 import TagInput from './TagInput'
 import PersonInput from './PersonInput'
 
@@ -15,12 +15,14 @@ import PersonInput from './PersonInput'
 const URL_PATTERNS = {
   tweet: /(?:twitter\.com|x\.com)\/[^/]+\/status\/\d+/i,
   video: /(?:youtube\.com\/watch|youtu\.be\/|vimeo\.com\/\d+)/i,
+  repo: /github\.com\/[^/]+\/[^/]+/i,
 }
 
 function detectUrlType(url) {
   if (!url) return null
   if (URL_PATTERNS.tweet.test(url)) return 'tweet'
   if (URL_PATTERNS.video.test(url)) return 'video'
+  if (URL_PATTERNS.repo.test(url)) return 'repo'
   if (url.match(/^https?:\/\//i) || url.includes('.')) return 'web'
   return null
 }
@@ -50,6 +52,17 @@ const TYPE_CONFIG = {
     bgColor: 'bg-red-500/10',
     description: 'Full transcript with timestamps from YouTube',
   },
+  repo: {
+    icon: (
+      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 16 16">
+        <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/>
+      </svg>
+    ),
+    label: 'GitHub Repo',
+    color: 'text-[#f0f6fc]',
+    bgColor: 'bg-[#f0f6fc]/10',
+    description: 'Analyze repository and import selected files',
+  },
   web: {
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -75,9 +88,17 @@ function ClipUrlTab({ onClose, onSuccess }) {
   const [warning, setWarning] = useState(null)
   const [successResult, setSuccessResult] = useState(null)
 
+  // Repo triage state
+  const [intent, setIntent] = useState('')
+  const [triageResult, setTriageResult] = useState(null)
+  const [selectedFiles, setSelectedFiles] = useState(new Set())
+  const [showAllFiles, setShowAllFiles] = useState(false)
+
   const clipUrl = useClipUrl()
   const clipTweet = useClipTweet()
   const clipVideo = useClipVideo()
+  const triageRepo = useTriageRepo()
+  const clipRepo = useClipRepo()
 
   const detectedType = useMemo(() => {
     let testUrl = url.trim()
@@ -88,7 +109,21 @@ function ClipUrlTab({ onClose, onSuccess }) {
   }, [url])
 
   const typeConfig = detectedType ? TYPE_CONFIG[detectedType] : null
-  const isLoading = clipUrl.isPending || clipTweet.isPending || clipVideo.isPending
+  const isLoading = clipUrl.isPending || clipTweet.isPending || clipVideo.isPending || triageRepo.isPending || clipRepo.isPending
+
+  // Calculate selected files size
+  const selectedSize = useMemo(() => {
+    if (!triageResult) return 0
+    const allFiles = [
+      ...triageResult.recommended_files,
+      ...(triageResult.file_tree || []).map(p => ({ path: p, size_bytes: 0 }))
+    ]
+    const sizeMap = {}
+    for (const f of allFiles) sizeMap[f.path] = f.size_bytes || 0
+    let total = 0
+    for (const path of selectedFiles) total += sizeMap[path] || 0
+    return total
+  }, [selectedFiles, triageResult])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -106,6 +141,41 @@ function ClipUrlTab({ onClose, onSuccess }) {
 
     const urlType = detectUrlType(processedUrl)
 
+    // Repo: stage 1 triage
+    if (urlType === 'repo' && !triageResult) {
+      try {
+        const result = await triageRepo.mutateAsync({
+          url: processedUrl,
+          intent: intent.trim() || undefined,
+        })
+        setTriageResult(result)
+        // Pre-select all recommended files
+        setSelectedFiles(new Set(result.recommended_files.map(f => f.path)))
+      } catch (err) {
+        setError(err.message || 'Failed to analyze repository')
+      }
+      return
+    }
+
+    // Repo: stage 2 import
+    if (urlType === 'repo' && triageResult) {
+      try {
+        const result = await clipRepo.mutateAsync({
+          url: processedUrl,
+          selected_files: [...selectedFiles],
+          intent: intent.trim() || undefined,
+          summary: triageResult.summary,
+          interest_tags: triageResult.interest_tags,
+        })
+        onSuccess?.(result)
+        onClose()
+      } catch (err) {
+        setError(err.message || 'Failed to import repository')
+      }
+      return
+    }
+
+    // Standard clip flow (tweet, video, web)
     try {
       let result
       if (urlType === 'tweet') {
@@ -136,22 +206,54 @@ function ClipUrlTab({ onClose, onSuccess }) {
     onClose()
   }
 
+  const handleResetTriage = () => {
+    setTriageResult(null)
+    setSelectedFiles(new Set())
+    setShowAllFiles(false)
+    setError(null)
+  }
+
+  const toggleFile = (path) => {
+    setSelectedFiles(prev => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }
+
+  const selectAll = () => {
+    if (!triageResult) return
+    setSelectedFiles(new Set(triageResult.recommended_files.map(f => f.path)))
+  }
+
+  const deselectAll = () => setSelectedFiles(new Set())
+
+  // Priority badge colors
+  const priorityStyles = {
+    high: 'bg-camel/20 text-camel',
+    medium: 'bg-[#f0f6fc]/10 text-secondary',
+    low: 'bg-elevated text-muted',
+  }
+
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      {/* URL input (always visible) */}
       <div>
         <label className="label text-muted block mb-1.5">URL</label>
         <input
           type="text"
           value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="Paste any URL — web page, tweet, video..."
+          onChange={(e) => { setUrl(e.target.value); if (triageResult) handleResetTriage() }}
+          placeholder="Paste any URL — web page, tweet, video, GitHub repo..."
           className="w-full bg-base border border-subtle rounded-lg px-4 py-2.5 text-primary placeholder:text-muted focus:border-camel focus:outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)]"
           disabled={isLoading}
           autoFocus
         />
       </div>
 
-      {detectedType && typeConfig && (
+      {/* Type detection pill */}
+      {detectedType && typeConfig && !triageResult && (
         <div className={`flex items-center gap-3 p-3 rounded-lg ${typeConfig.bgColor}`}>
           <span className={typeConfig.color}>{typeConfig.icon}</span>
           <div className="flex-1">
@@ -161,6 +263,7 @@ function ClipUrlTab({ onClose, onSuccess }) {
         </div>
       )}
 
+      {/* Web-only title field */}
       {detectedType === 'web' && (
         <div>
           <label className="label text-muted block mb-1.5">
@@ -174,6 +277,160 @@ function ClipUrlTab({ onClose, onSuccess }) {
             className="w-full bg-base border border-subtle rounded-lg px-4 py-2.5 text-primary placeholder:text-muted focus:border-camel focus:outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)]"
             disabled={isLoading}
           />
+        </div>
+      )}
+
+      {/* Repo: stage 1 — intent field */}
+      {detectedType === 'repo' && !triageResult && (
+        <div>
+          <label className="label text-muted block mb-1.5">
+            Interest <span className="font-normal text-tertiary">(optional)</span>
+          </label>
+          <textarea
+            value={intent}
+            onChange={(e) => setIntent(e.target.value)}
+            placeholder="What interests you about this repo? e.g. 'how they handle auth' or 'the data pipeline architecture'"
+            rows={2}
+            className="w-full bg-base border border-subtle rounded-lg px-4 py-2.5 text-primary placeholder:text-muted focus:border-camel focus:outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)] resize-none"
+            disabled={isLoading}
+          />
+        </div>
+      )}
+
+      {/* Repo: stage 2 — triage results */}
+      {triageResult && (
+        <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
+          {/* Repo metadata card */}
+          <div className="bg-[#f0f6fc]/5 border border-[#f0f6fc]/10 rounded-lg p-3">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[#f0f6fc] font-medium">{triageResult.repo.full_name}</span>
+              <span className="text-xs text-muted">
+                {triageResult.repo.stars.toLocaleString()} stars
+              </span>
+              <span className="text-xs px-1.5 py-0.5 rounded bg-elevated text-secondary">
+                {triageResult.repo.language}
+              </span>
+            </div>
+            {triageResult.repo.description && (
+              <p className="text-xs text-secondary">{triageResult.repo.description}</p>
+            )}
+          </div>
+
+          {/* LLM summary */}
+          <p className="text-sm text-secondary">{triageResult.summary}</p>
+
+          {/* Interest tags */}
+          {triageResult.interest_tags?.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {triageResult.interest_tags.map(tag => (
+                <span key={tag} className="text-xs px-2 py-0.5 rounded-full bg-camel/15 text-camel">
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* File selection controls */}
+          <div className="flex items-center justify-between">
+            <span className="label text-muted">
+              {selectedFiles.size} file{selectedFiles.size !== 1 ? 's' : ''} selected
+              {selectedSize > 0 && (
+                <span className="font-normal text-tertiary ml-1">
+                  (~{(selectedSize / 1024).toFixed(0)}KB)
+                </span>
+              )}
+            </span>
+            <div className="flex gap-2 text-xs">
+              <button type="button" onClick={selectAll} className="text-camel hover:underline">
+                Select all
+              </button>
+              <span className="text-muted">|</span>
+              <button type="button" onClick={deselectAll} className="text-secondary hover:underline">
+                Clear
+              </button>
+            </div>
+          </div>
+
+          {/* Size warning */}
+          {selectedSize > 500_000 && (
+            <div className="bg-camel/10 border border-camel/20 rounded-lg p-2">
+              <p className="text-xs text-camel">
+                Large import ({(selectedSize / 1024).toFixed(0)}KB). Consider selecting fewer files for faster processing.
+              </p>
+            </div>
+          )}
+
+          {/* Recommended files checklist */}
+          <div className="space-y-1">
+            {triageResult.recommended_files.map(file => (
+              <label
+                key={file.path}
+                className="flex items-start gap-2 p-2 rounded-lg hover:bg-raised cursor-pointer group"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedFiles.has(file.path)}
+                  onChange={() => toggleFile(file.path)}
+                  className="mt-0.5 accent-[#d4a574]"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-primary font-mono truncate">{file.path}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0 ${priorityStyles[file.priority] || priorityStyles.medium}`}>
+                      {file.priority === 'high' ? 'key' : file.priority}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted mt-0.5">{file.reason}</p>
+                </div>
+              </label>
+            ))}
+          </div>
+
+          {/* Browse all files (collapsible) */}
+          {triageResult.file_tree?.length > triageResult.recommended_files.length && (
+            <div>
+              <button
+                type="button"
+                onClick={() => setShowAllFiles(!showAllFiles)}
+                className="text-xs text-secondary hover:text-primary flex items-center gap-1"
+              >
+                <svg className={`w-3 h-3 transition-transform ${showAllFiles ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+                Browse all {triageResult.total_files} files
+              </button>
+
+              {showAllFiles && (
+                <div className="mt-2 max-h-48 overflow-y-auto space-y-0.5 border border-subtle rounded-lg p-2">
+                  {triageResult.file_tree
+                    .filter(p => !triageResult.recommended_files.some(f => f.path === p))
+                    .map(path => (
+                      <label
+                        key={path}
+                        className="flex items-center gap-2 py-0.5 px-1 rounded hover:bg-raised cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedFiles.has(path)}
+                          onChange={() => toggleFile(path)}
+                          className="accent-[#d4a574]"
+                        />
+                        <span className="text-xs text-secondary font-mono truncate">{path}</span>
+                      </label>
+                    ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Back button to re-triage */}
+          <button
+            type="button"
+            onClick={handleResetTriage}
+            className="text-xs text-muted hover:text-secondary"
+          >
+            &larr; Back to re-analyze
+          </button>
         </div>
       )}
 
@@ -211,7 +468,11 @@ function ClipUrlTab({ onClose, onSuccess }) {
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            {detectedType === 'tweet' ? 'Fetching tweet...' : detectedType === 'video' ? 'Fetching transcript...' : 'Fetching and extracting content...'}
+            {triageRepo.isPending ? 'Analyzing repository...' :
+             clipRepo.isPending ? 'Importing files...' :
+             detectedType === 'tweet' ? 'Fetching tweet...' :
+             detectedType === 'video' ? 'Fetching transcript...' :
+             'Fetching and extracting content...'}
           </p>
         </div>
       )}
@@ -219,10 +480,13 @@ function ClipUrlTab({ onClose, onSuccess }) {
       <div className="flex gap-3 pt-2">
         <button
           type="submit"
-          disabled={isLoading || !detectedType}
+          disabled={isLoading || !detectedType || (triageResult && selectedFiles.size === 0)}
           className="flex-1 py-2.5 px-4 bg-gradient-to-r from-camel to-terra text-base font-medium rounded-lg hover:shadow-lg hover:shadow-camel/30 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:shadow-none"
         >
-          {isLoading ? 'Clipping...' : 'Clip'}
+          {isLoading ? (triageRepo.isPending ? 'Analyzing...' : clipRepo.isPending ? 'Importing...' : 'Clipping...') :
+           detectedType === 'repo' && !triageResult ? 'Analyze Repository' :
+           triageResult ? `Import ${selectedFiles.size} File${selectedFiles.size !== 1 ? 's' : ''}` :
+           'Clip'}
         </button>
         <button
           type="button"
@@ -590,7 +854,7 @@ export default function AddSourceModal({ onClose, onSuccess }) {
         {/* Help text */}
         <p className="text-xs text-muted mt-4">
           {activeTab === 'url'
-            ? 'Supported: web pages, articles, tweets, threads, YouTube videos.'
+            ? 'Supported: web pages, articles, tweets, threads, YouTube videos, GitHub repos.'
             : 'Supported: .md, .markdown, .txt files. Headings become navigable sections.'}
         </p>
       </div>

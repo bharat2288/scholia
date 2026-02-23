@@ -48,6 +48,7 @@ const TYPE_CONFIG = {
   thread: { label: 'Threads', icon: '𝕏' },
   tweet: { label: 'Tweets', icon: '𝕏' },
   media: { label: 'Videos', icon: '▶' },
+  repo: { label: 'GitHub', icon: '' },
   note: { label: 'Notes', icon: '📝' }
 }
 
@@ -768,6 +769,11 @@ const SOURCE_TYPE_STYLES = {
     label: '▶ Video',
     bg: 'bg-[#ff0000]/20',   // YouTube red at 20%
     text: 'text-[#ff0000]'
+  },
+  repo: {
+    label: ' GitHub',
+    bg: 'bg-[#f0f6fc]/15',
+    text: 'text-[#f0f6fc]'
   },
   note: {
     label: '📝 Note',

@@ -160,7 +160,7 @@ TEXT TO ANALYZE:
         "max_tokens": 12288,
         "sort_order": 2,
         "show_as_quick_action": True,
-        "source_types": ["document", "note"],
+        "source_types": ["document", "note", "repo"],
     },
     {
         "id": "critique",
@@ -194,7 +194,7 @@ TEXT TO ANALYZE:
         "max_tokens": 8192,
         "sort_order": 3,
         "show_as_quick_action": True,
-        "source_types": ["document", "web", "note"],
+        "source_types": ["document", "web", "note", "repo"],
     },
     {
         "id": "concept-map",
@@ -244,7 +244,7 @@ TEXT TO ANALYZE:
         "max_tokens": 8192,
         "sort_order": 4,
         "show_as_quick_action": False,
-        "source_types": ["document", "web", "media", "note"],
+        "source_types": ["document", "web", "media", "note", "repo"],
     },
     {
         "id": "explain",
@@ -362,7 +362,7 @@ TEXT TO ANALYZE:
         "max_tokens": 8192,
         "sort_order": 7,
         "show_as_quick_action": False,
-        "source_types": ["document", "web", "note"],
+        "source_types": ["document", "web", "note", "repo"],
     },
 ]
 

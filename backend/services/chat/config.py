@@ -20,8 +20,8 @@ CHAT_MODELS = {
     # =========================================================================
     "claude-haiku": {
         "provider": "anthropic",
-        "model": "claude-3-5-haiku-20241022",
-        "display_name": "Claude 3.5 Haiku",
+        "model": "claude-haiku-4-5-20251001",
+        "display_name": "Claude 4.5 Haiku",
         "description": "Fast and efficient for simple tasks",
         "api_url": "https://api.anthropic.com/v1/messages",
         "pricing": {"input": 1.00, "output": 5.00},

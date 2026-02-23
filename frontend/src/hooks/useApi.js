@@ -235,6 +235,54 @@ export function useClipVideo() {
 }
 
 /**
+ * Stage 1: Triage a GitHub repository — fetch metadata, LLM recommends files.
+ * No cache invalidation (doesn't create a source).
+ */
+export function useTriageRepo() {
+  return useMutation({
+    mutationFn: ({ url, intent, model_id }) => apiFetch('/sources/triage-repo', {
+      method: 'POST',
+      body: JSON.stringify({ url, intent, model_id }),
+    }),
+  })
+}
+
+/**
+ * Stage 2: Import selected files from a GitHub repository.
+ */
+export function useClipRepo() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ url, selected_files, intent, summary, interest_tags }) => apiFetch('/sources/clip-repo', {
+      method: 'POST',
+      body: JSON.stringify({ url, selected_files, intent, summary, interest_tags }),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sources'] })
+    },
+  })
+}
+
+/**
+ * Append additional files to an existing repo source.
+ */
+export function useAppendRepoFiles() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ sourceId, file_paths }) => apiFetch(`/sources/${sourceId}/append-repo-files`, {
+      method: 'POST',
+      body: JSON.stringify({ file_paths }),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sources'] })
+      queryClient.invalidateQueries({ queryKey: ['reading'] })
+    },
+  })
+}
+
+/**
  * Preview a markdown note file (extract title, word count, AI suggestions)
  */
 export function usePreviewNote() {

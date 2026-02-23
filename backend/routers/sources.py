@@ -86,6 +86,7 @@ DOCUMENTS_DIR = SOURCES_DIR / "documents"
 WEB_DIR = SOURCES_DIR / "web"
 THREADS_DIR = SOURCES_DIR / "threads"
 VIDEOS_DIR = SOURCES_DIR / "videos"
+REPOS_DIR = SOURCES_DIR / "repos"
 NOTES_DIR = SOURCES_DIR / "notes"
 
 # Legacy path (for migration period - check both locations)
@@ -1029,6 +1030,310 @@ async def clip_video_endpoint(request: ClipVideoRequest):
         "segment_count": result.segment_count,
         "sections_count": len(result.sections),
         "content_path": result.content_path
+    }
+
+
+# ============================================================
+# GitHub Repository Clipping
+# ============================================================
+
+class TriageRepoRequest(BaseModel):
+    """Request body for repository triage (stage 1)."""
+    url: str
+    intent: Optional[str] = None
+    model_id: str = "claude-haiku"
+
+
+class ClipRepoRequest(BaseModel):
+    """Request body for repository import (stage 2)."""
+    url: str
+    selected_files: List[str]
+    intent: Optional[str] = None
+    summary: Optional[str] = None
+    interest_tags: Optional[List[str]] = None
+
+
+class AppendRepoFilesRequest(BaseModel):
+    """Request body for appending files to an existing repo source."""
+    file_paths: List[str]
+
+
+@router.post("/triage-repo")
+async def triage_repo_endpoint(request: TriageRepoRequest):
+    """
+    Stage 1: Analyze a GitHub repository and recommend interesting files.
+
+    Fetches repo metadata, file tree, and README, then uses LLM to
+    recommend which files are worth reading.
+
+    Returns: repo metadata, summary, recommended files, interest tags
+    """
+    from services.repo_clipper import (
+        parse_github_url, fetch_repo_metadata, fetch_file_tree,
+        fetch_readme, triage_repo,
+    )
+    import httpx as _httpx
+
+    # Parse URL
+    try:
+        owner, repo = parse_github_url(request.url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Check for duplicate
+    db = await get_db()
+    cursor = await db.execute("""
+        SELECT id, title FROM sources
+        WHERE source_type = 'repo'
+        AND json_extract(metadata, '$.full_name') = ?
+    """, [f"{owner}/{repo}"])
+    existing = await cursor.fetchone()
+
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Already imported: '{existing[1]}' (id: {existing[0]})"
+        )
+
+    # Fetch repo data from GitHub
+    try:
+        repo_meta = await fetch_repo_metadata(owner, repo)
+        tree = await fetch_file_tree(owner, repo, repo_meta.default_branch)
+        readme = await fetch_readme(owner, repo)
+    except _httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Repository not found: {owner}/{repo}")
+        if e.response.status_code == 403:
+            raise HTTPException(status_code=429, detail="GitHub API rate limit exceeded. Set GITHUB_TOKEN for higher limits.")
+        raise HTTPException(status_code=400, detail=f"GitHub API error: {e.response.status_code}")
+
+    # Run LLM triage
+    try:
+        result = await triage_repo(repo_meta, tree, readme, request.intent, request.model_id)
+    except Exception as e:
+        logger.error(f"Triage LLM failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Triage analysis failed: {str(e)}")
+
+    return {
+        "repo": {
+            "owner": result.repo.owner,
+            "name": result.repo.name,
+            "full_name": result.repo.full_name,
+            "description": result.repo.description,
+            "default_branch": result.repo.default_branch,
+            "stars": result.repo.stars,
+            "language": result.repo.language,
+            "topics": result.repo.topics,
+            "license": result.repo.license,
+        },
+        "summary": result.summary,
+        "recommended_files": [
+            {
+                "path": f.path,
+                "reason": f.reason,
+                "priority": f.priority,
+                "size_bytes": f.size_bytes,
+            }
+            for f in result.recommended_files
+        ],
+        "interest_tags": result.interest_tags,
+        "total_files": result.total_files,
+        "file_tree": result.file_tree,
+    }
+
+
+@router.post("/clip-repo")
+async def clip_repo_endpoint(request: ClipRepoRequest):
+    """
+    Stage 2: Import selected files from a GitHub repository.
+
+    Fetches file contents, assembles extracted.txt, creates source + sections.
+    """
+    from services.repo_clipper import (
+        parse_github_url, fetch_repo_metadata, fetch_readme,
+        import_repo_files,
+    )
+    import httpx as _httpx
+
+    # Parse URL
+    try:
+        owner, repo = parse_github_url(request.url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not request.selected_files:
+        raise HTTPException(status_code=400, detail="No files selected")
+
+    # Fetch metadata + README for content assembly
+    try:
+        repo_meta = await fetch_repo_metadata(owner, repo)
+        readme = await fetch_readme(owner, repo)
+    except _httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Repository not found: {owner}/{repo}")
+        raise HTTPException(status_code=400, detail=f"GitHub API error: {e.response.status_code}")
+
+    # Ensure output directory exists
+    REPOS_DIR.mkdir(parents=True, exist_ok=True)
+    output_dir = REPOS_DIR / f"{owner}_{repo}"
+
+    # Import files and assemble content
+    try:
+        result = await import_repo_files(
+            owner, repo, repo_meta.default_branch,
+            request.selected_files, readme, repo_meta, output_dir,
+        )
+    except Exception as e:
+        logger.error(f"Repo import failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
+
+    # Insert into database
+    source_id = str(uuid.uuid4())[:8]
+    now = datetime.now().isoformat()
+
+    source_metadata = {
+        "owner": owner,
+        "repo_name": repo,
+        "full_name": f"{owner}/{repo}",
+        "default_branch": repo_meta.default_branch,
+        "stars": repo_meta.stars,
+        "language": repo_meta.language,
+        "topics": repo_meta.topics,
+        "license": repo_meta.license,
+        "files_imported": result.files_imported,
+        "interest_tags": request.interest_tags or [],
+        "clipped_at": now,
+    }
+
+    db = await get_db()
+    await db.execute("""
+        INSERT INTO sources (id, title, source_type, author_display, year,
+                            url, content_path, metadata, created_at, updated_at)
+        VALUES (?, ?, 'repo', ?, ?, ?, ?, ?, ?, ?)
+    """, [
+        source_id, result.title, owner, None,
+        result.url, result.content_path, json.dumps(source_metadata),
+        now, now,
+    ])
+
+    # Insert sections
+    for i, section in enumerate(result.sections):
+        section_id = f"{source_id}-s{i}"
+        await db.execute("""
+            INSERT INTO sections (id, source_id, title, level, start_offset,
+                                  end_offset, order_index, parent_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, [
+            section_id, source_id, section["title"], section["level"],
+            section["start_offset"], section["end_offset"], i, None,
+        ])
+
+    # Index in FTS
+    await db.execute("""
+        INSERT INTO sources_fts (rowid, title, author_display)
+        SELECT rowid, title, author_display FROM sources WHERE id = ?
+    """, [source_id])
+
+    await db.commit()
+
+    return {
+        "id": source_id,
+        "title": result.title,
+        "owner": owner,
+        "repo_name": repo,
+        "url": result.url,
+        "source_type": "repo",
+        "files_imported": len(result.files_imported),
+        "sections_count": len(result.sections),
+        "content_path": result.content_path,
+        "summary": request.summary,
+    }
+
+
+@router.post("/{source_id}/append-repo-files")
+async def append_repo_files_endpoint(source_id: str, request: AppendRepoFilesRequest):
+    """
+    Append additional files to an existing repo source.
+
+    Fetches new file contents and appends as new sections at the end.
+    """
+    from services.repo_clipper import append_files_to_repo
+
+    if not request.file_paths:
+        raise HTTPException(status_code=400, detail="No file paths provided")
+
+    db = await get_db()
+
+    # Fetch source
+    cursor = await db.execute("""
+        SELECT id, content_path, metadata FROM sources
+        WHERE id = ? AND source_type = 'repo'
+    """, [source_id])
+    source = await cursor.fetchone()
+
+    if not source:
+        raise HTTPException(status_code=404, detail="Repo source not found")
+
+    metadata = json.loads(source[2])
+    owner = metadata["owner"]
+    repo = metadata["repo_name"]
+    branch = metadata["default_branch"]
+    content_path = source[1]
+
+    # Get existing sections for order_index calculation
+    cursor = await db.execute("""
+        SELECT id, title, level, start_offset, end_offset, order_index
+        FROM sections WHERE source_id = ? ORDER BY order_index
+    """, [source_id])
+    rows = await cursor.fetchall()
+    existing_sections = [
+        {"id": r[0], "title": r[1], "level": r[2],
+         "start_offset": r[3], "end_offset": r[4], "order_index": r[5]}
+        for r in rows
+    ]
+
+    # Filter out already-imported files
+    already_imported = set(metadata.get("files_imported", []))
+    new_paths = [p for p in request.file_paths if p not in already_imported]
+
+    if not new_paths:
+        raise HTTPException(status_code=400, detail="All selected files are already imported")
+
+    try:
+        _, new_sections = await append_files_to_repo(
+            source_id, owner, repo, branch, new_paths,
+            content_path, existing_sections,
+        )
+    except Exception as e:
+        logger.error(f"Repo append failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Append failed: {str(e)}")
+
+    # Insert new sections
+    now = datetime.now().isoformat()
+    for section in new_sections:
+        section_id = f"{source_id}-s{section['order_index']}"
+        await db.execute("""
+            INSERT INTO sections (id, source_id, title, level, start_offset,
+                                  end_offset, order_index, parent_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, [
+            section_id, source_id, section["title"], section["level"],
+            section["start_offset"], section["end_offset"],
+            section["order_index"], None,
+        ])
+
+    # Update metadata
+    metadata["files_imported"] = list(already_imported | set(new_paths))
+    await db.execute("""
+        UPDATE sources SET metadata = ?, updated_at = ? WHERE id = ?
+    """, [json.dumps(metadata), now, source_id])
+
+    await db.commit()
+
+    return {
+        "source_id": source_id,
+        "new_sections": len(new_sections),
+        "total_files": len(metadata["files_imported"]),
     }
 
 
