@@ -127,20 +127,22 @@ async def handle_webhook(request: Request):
         from_number = msg["from"]
 
         # Detect intent and route accordingly
+        # Use text_lower for command matching (case-insensitive)
+        text_lower = text.lower()
         if text.startswith("?"):
             # Check for help command
-            if text.lower() in ["?help", "?h"]:
+            if text_lower in ["?help", "?h"]:
                 await handle_help(from_number)
             else:
                 await handle_query_intent(from_number, text)
-        elif text.startswith("done:") or text.lower().startswith("done "):
-            query_text = text[5:].strip() if text.startswith("done:") else text[4:].strip()
+        elif text_lower.startswith("done:") or text_lower.startswith("done "):
+            query_text = text[5:].strip() if text_lower.startswith("done:") else text[4:].strip()
             await handle_mark_done(from_number, query_text)
-        elif text.startswith("add:") or text.lower().startswith("add "):
-            query_text = text[4:].strip() if text.startswith("add:") else text[3:].strip()
+        elif text_lower.startswith("add:") or text_lower.startswith("add "):
+            query_text = text[4:].strip() if text_lower.startswith("add:") else text[3:].strip()
             await handle_add_detail(from_number, query_text)
-        elif text.startswith("delete:") or text.lower().startswith("delete "):
-            query_text = text[7:].strip() if text.startswith("delete:") else text[6:].strip()
+        elif text_lower.startswith("delete:") or text_lower.startswith("delete "):
+            query_text = text[7:].strip() if text_lower.startswith("delete:") else text[6:].strip()
             await handle_delete_entry(from_number, query_text)
         else:
             # Default: new journal entry capture (classification flow)
@@ -230,10 +232,11 @@ async def _create_journal_from_classification(
     Shared by WhatsApp capture and manual capture endpoints.
     Returns dict with entry details for response/logging.
     """
-    category = classification.effective_category
+    categories = classification.effective_categories
+    category = categories[0]  # primary category for logging/response
     header = classification.header or ""
     details = classification.details
-    is_task = classification.is_task
+    is_task = "task" in categories
 
     # Resolve unclosed [[refs via fuzzy DB match
     content = await _resolve_unclosed_refs(header)
@@ -242,6 +245,7 @@ async def _create_journal_from_classification(
     tag_override = _extract_tag_override(content)
     if tag_override:
         category = tag_override
+        categories = [tag_override]
         is_task = category == "task"
 
     # Match person refs to existing person gluons
@@ -279,34 +283,40 @@ async def _create_journal_from_classification(
     # Process [[refs]] and ##tags in content (wipes all links, recreates from content)
     await process_links_in_content(entry_id, content)
 
-    # Add category tag only if not already linked by process_links_in_content
-    tag_id = await get_or_create_tag(category)
-    cursor = await db.execute(
-        "SELECT 1 FROM links WHERE source_id = ? AND target_id = ? AND link_type = 'tag'",
-        [entry_id, tag_id]
-    )
-    if not await cursor.fetchone():
-        link_id = str(uuid.uuid4())[:8]
-        await db.execute("""
-            INSERT INTO links (id, source_id, target_id, link_type, created_at)
-            VALUES (?, ?, ?, 'tag', ?)
-        """, [link_id, entry_id, tag_id, now])
+    # Add category tags — link ALL categories, not just primary
+    tag_ids = []
+    for cat in categories:
+        tag_id = await get_or_create_tag(cat)
+        tag_ids.append(tag_id)
+        cursor = await db.execute(
+            "SELECT 1 FROM links WHERE source_id = ? AND target_id = ? AND link_type = 'tag'",
+            [entry_id, tag_id]
+        )
+        if not await cursor.fetchone():
+            link_id = str(uuid.uuid4())[:8]
+            await db.execute("""
+                INSERT INTO links (id, source_id, target_id, link_type, created_at)
+                VALUES (?, ?, ?, 'tag', ?)
+            """, [link_id, entry_id, tag_id, now])
     await db.commit()
 
-    print(f"[{captured_via} → Journal] {category}: {header[:60]}")
+    cat_label = "+".join(categories) if len(categories) > 1 else category
+    print(f"[{captured_via} → Journal] {cat_label}: {header[:60]}")
 
     return {
         "id": entry_id,
         "content": content,
         "body": body,
         "category": category,
+        "categories": categories,
         "header": header,
         "details": details,
         "is_task": is_task,
         "person_refs": classification.person_refs,
         "matched_persons": matched_persons,
         "confidence": classification.confidence,
-        "tag_id": tag_id,
+        "tag_id": tag_ids[0],
+        "tag_ids": tag_ids,
     }
 
 
@@ -376,14 +386,20 @@ async def _do_query(query_text: str) -> dict:
 
     db = await get_db()
 
-    # Build time filter clause
+    # Build filter clauses
+    extra_clauses = []
+    params = [category]
+
     if time_filter == "today":
         today = datetime.now().date().isoformat()
-        time_clause = "AND g.created_at >= ?"
-        time_param = today
-    else:
-        time_clause = ""
-        time_param = None
+        extra_clauses.append("AND g.created_at >= ?")
+        params.append(today)
+
+    # Tasks default to open only — no point showing completed tasks
+    if category == "task":
+        extra_clauses.append("AND g.completed = 0")
+
+    where_extra = "\n        ".join(extra_clauses)
 
     query = f"""
         SELECT g.id, g.content, g.body, g.completed, g.created_at
@@ -391,12 +407,10 @@ async def _do_query(query_text: str) -> dict:
         JOIN links l ON l.source_id = g.id AND l.link_type = 'tag'
         JOIN gluons t ON l.target_id = t.id AND t.type = 'tag' AND t.content = ?
         WHERE g.type = 'journal_entry'
-        {time_clause}
+        {where_extra}
         ORDER BY g.created_at DESC
         LIMIT 10
     """
-
-    params = [category, time_param] if time_param else [category]
     cursor = await db.execute(query, params)
     rows = await cursor.fetchall()
 
@@ -587,19 +601,20 @@ def _parse_intent(text: str) -> tuple[str, str]:
     Default behavior: Any text without a prefix is captured as a journal entry.
     No "add:" prefix required.
     """
+    text_lower = text.lower()
     if text.startswith("?"):
         # Help command
-        if text.lower() in ["?help", "?h"]:
+        if text_lower in ["?help", "?h"]:
             return "help", text
         return "query", text
-    elif text.startswith("done:") or text.lower().startswith("done "):
-        remainder = text[5:].strip() if text.startswith("done:") else text[4:].strip()
+    elif text_lower.startswith("done:") or text_lower.startswith("done "):
+        remainder = text[5:].strip() if text_lower.startswith("done:") else text[4:].strip()
         return "done", remainder
-    elif text.startswith("add:") or text.lower().startswith("add "):
-        remainder = text[4:].strip() if text.startswith("add:") else text[3:].strip()
+    elif text_lower.startswith("add:") or text_lower.startswith("add "):
+        remainder = text[4:].strip() if text_lower.startswith("add:") else text[3:].strip()
         return "add", remainder
-    elif text.startswith("delete:") or text.lower().startswith("delete "):
-        remainder = text[7:].strip() if text.startswith("delete:") else text[6:].strip()
+    elif text_lower.startswith("delete:") or text_lower.startswith("delete "):
+        remainder = text[7:].strip() if text_lower.startswith("delete:") else text[6:].strip()
         return "delete", remainder
     else:
         # Default: capture as journal entry (no prefix required)

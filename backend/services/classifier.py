@@ -57,7 +57,7 @@ class ClassificationResult:
 @dataclass
 class StructuredClassification:
     """Result of structured classification (Gemini Flash)."""
-    category: str = "inbox"
+    categories: list[str] = field(default_factory=lambda: ["inbox"])
     header: str = ""
     details: list[str] = field(default_factory=list)
     is_task: bool = False
@@ -66,8 +66,18 @@ class StructuredClassification:
     reasoning: str = ""
 
     @property
+    def category(self) -> str:
+        """Primary category (first in list). Backward-compatible."""
+        return self.categories[0] if self.categories else "inbox"
+
+    @property
     def effective_category(self) -> str:
         return self.category if self.confidence >= CONFIDENCE_THRESHOLD else "inbox"
+
+    @property
+    def effective_categories(self) -> list[str]:
+        """All categories if confident, otherwise just ['inbox']."""
+        return self.categories if self.confidence >= CONFIDENCE_THRESHOLD else ["inbox"]
 
 
 # ============================================================
@@ -195,7 +205,7 @@ SPLITTING RULES:
 OUTPUT FORMAT — always a JSON array, no markdown:
 [
   {
-    "category": "task",
+    "categories": ["task"],
     "header": "Concise title (imperative for tasks, descriptive for others)",
     "details": ["Sub-point 1", "Sub-point 2"],
     "is_task": true,
@@ -203,6 +213,13 @@ OUTPUT FORMAT — always a JSON array, no markdown:
     "confidence": 0.85
   }
 ]
+
+MULTI-CATEGORY:
+- If an entry genuinely fits multiple categories, include all. Primary category first.
+- "US Visa for Bharat" → categories: ["task", "admin"] (action + reference)
+- "Dinner with Sarah, maybe try that new place" → categories: ["social"] (just social)
+- "Buy groceries" → categories: ["task"] (just task)
+- Don't force multiple categories — most entries have one.
 
 SPECIAL SYNTAX (preserve as-is, do NOT modify):
 - [[text]] → reference syntax. Keep exactly as written in the header/details.
@@ -231,15 +248,23 @@ INPUT:
 def _parse_one(item: dict, fallback_text: str) -> StructuredClassification:
     """Parse a single classification item from the LLM response."""
     valid_categories = {"task", "idea", "social", "admin", "inbox"}
-    category = item.get("category", "inbox")
-    if category not in valid_categories:
-        category = "inbox"
+
+    # Parse categories array, fall back to single "category" string for compat
+    raw_categories = item.get("categories")
+    if isinstance(raw_categories, list) and raw_categories:
+        categories = [c for c in raw_categories if c in valid_categories]
+        if not categories:
+            categories = ["inbox"]
+    else:
+        # Backward compat: LLM returned "category" string instead of array
+        single = item.get("category", "inbox")
+        categories = [single] if single in valid_categories else ["inbox"]
 
     return StructuredClassification(
-        category=category,
+        categories=categories,
         header=item.get("header", fallback_text[:100]),
         details=item.get("details", []),
-        is_task=item.get("is_task", category == "task"),
+        is_task=item.get("is_task", categories[0] == "task"),
         person_refs=item.get("person_refs", []),
         confidence=item.get("confidence", 0.5),
         reasoning=item.get("reasoning", ""),
@@ -258,7 +283,7 @@ async def classify_structured(text: str) -> list[StructuredClassification]:
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         return [StructuredClassification(
-            category="inbox",
+            categories=["inbox"],
             header=text[:100],
             confidence=0.0,
             reasoning="No OpenRouter API key configured"
@@ -302,7 +327,7 @@ async def classify_structured(text: str) -> list[StructuredClassification]:
 
         if not isinstance(result, list) or len(result) == 0:
             return [StructuredClassification(
-                category="inbox", header=text[:100], confidence=0.0,
+                categories=["inbox"], header=text[:100], confidence=0.0,
                 reasoning="Unexpected classifier output format"
             )]
 
@@ -311,7 +336,7 @@ async def classify_structured(text: str) -> list[StructuredClassification]:
     except Exception as e:
         print(f"[Classifier ERROR] {type(e).__name__}: {e}")
         return [StructuredClassification(
-            category="inbox",
+            categories=["inbox"],
             header=text[:100],
             confidence=0.0,
             reasoning=f"Classification error: {str(e)}"
