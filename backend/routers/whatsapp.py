@@ -257,6 +257,14 @@ async def _create_journal_from_classification(
         if ref_str not in content:
             content += f" {ref_str}"
 
+    # Auto-prefix task details with [] for checkbox rendering
+    if is_task and details:
+        details = [
+            d if d.lstrip().startswith('[ ]') or d.lstrip().startswith('[]') or d.lstrip().startswith('[x]')
+            else f"[] {d}"
+            for d in details
+        ]
+
     # Create the journal entry gluon
     db = await get_db()
     now = datetime.now().isoformat()
@@ -646,7 +654,7 @@ def _format_query_reply(result: dict) -> str:
             if e.get("body"):
                 for line in e["body"].split('\n'):
                     trimmed = line.strip()
-                    if trimmed.startswith('[ ]'):
+                    if trimmed.startswith('[ ]') or trimmed.startswith('[]'):
                         sub_total += 1
                     elif trimmed.startswith('[x]'):
                         sub_done += 1
@@ -758,6 +766,11 @@ delete: <entry> — Delete entry
 [[Name]] — Link to person/note
 ##tag — Add category tag
 • "Finish [[project]] today ##urgent"
+
+*SUBTASKS*
+Add [] in details for checkboxes
+• "Build app" then "add: build app | [] design UI"
+• Tasks auto-get [] on each detail line
 
 *HELP*
 ?help or ?h — Show this menu

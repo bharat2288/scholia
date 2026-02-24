@@ -225,8 +225,10 @@ SPECIAL SYNTAX (preserve as-is, do NOT modify):
 - [[text]] → reference syntax. Keep exactly as written in the header/details.
 - [[text (unclosed) → keep the [[ marker and text as-is. Do NOT close it or guess.
 - ##tag → tag syntax. Keep exactly as written in the header/details.
+- [ ], [], [x] → checkbox syntax for subtasks. Keep exactly as written in details.
 - These are user markup. Preserve them; do not interpret or remove them.
 - Example: "Finish [[moom audit today ##urgent" → header: "Finish [[moom audit today ##urgent"
+- Example: details with "[] design UI" → keep as "[] design UI"
 
 HEADER RULES:
 - Tasks: imperative verb. "Call dentist" not "Need to call dentist"

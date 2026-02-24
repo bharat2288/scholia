@@ -10,6 +10,7 @@ import {
   useDeleteJournalEntry,
 } from '../../hooks/useApi'
 import { MarkdownPreview, useRefNavigation } from '../../utils/markdown'
+import { parseBodyContent } from '../../utils/bodyParser'
 import AutocompleteTextarea from '../common/AutocompleteTextarea'
 
 /**
@@ -226,7 +227,7 @@ function JournalEntryForm({ onClose }) {
         value={body}
         onChange={setBody}
         onCancel={onClose}
-        placeholder="Details (optional, one per line)..."
+        placeholder="Details (optional, use [] for subtasks)..."
         rows={2}
         inputMode="textarea"
         className="mb-3"
@@ -306,6 +307,11 @@ function DateGroup({ date, categories, tagMap, searchQuery }) {
 
 
 function CategorySection({ category, tagId, entries, tagMap }) {
+  // Sort tasks: incomplete first, completed last (preserve original order within each group)
+  const sortedEntries = category === 'task'
+    ? [...entries].sort((a, b) => (a.completed || 0) - (b.completed || 0))
+    : entries
+
   return (
     <div>
       {tagId ? (
@@ -316,7 +322,7 @@ function CategorySection({ category, tagId, entries, tagMap }) {
         <p className="label text-camel mb-2">{category}</p>
       )}
       <div className="space-y-1">
-        {entries.map(entry => (
+        {sortedEntries.map(entry => (
           <JournalEntryRow key={entry.id} entry={entry} primaryCategory={category} tagMap={tagMap} />
         ))}
       </div>
@@ -327,45 +333,7 @@ function CategorySection({ category, tagId, entries, tagMap }) {
 
 const COLLAPSE_THRESHOLD = 2
 
-/**
- * Parse body text into sub-tasks, regular lines, and completion comments.
- *
- * Sub-tasks: lines starting with [ ] or [x]
- * Regular lines: any other non-empty lines before the --- separator
- * Completion comments: lines after the --- separator
- *
- * @returns {object} { subTasks: [{text, completed}], otherLines: [string], completionComments: [string] }
- */
-function parseBodyContent(body) {
-  if (!body) return { subTasks: [], otherLines: [], completionComments: [] }
-
-  const lines = body.split('\n')
-  const subTasks = []
-  const otherLines = []
-  const completionComments = []
-  let reachedSeparator = false
-
-  for (const line of lines) {
-    const trimmed = line.trim()
-
-    if (trimmed === '---') {
-      reachedSeparator = true
-      continue
-    }
-
-    if (reachedSeparator) {
-      if (trimmed) completionComments.push(trimmed)
-    } else if (trimmed.startsWith('[ ]')) {
-      subTasks.push({ text: trimmed.slice(3).trim(), completed: false })
-    } else if (trimmed.startsWith('[x]')) {
-      subTasks.push({ text: trimmed.slice(3).trim(), completed: true })
-    } else if (trimmed) {
-      otherLines.push(trimmed)
-    }
-  }
-
-  return { subTasks, otherLines, completionComments }
-}
+// parseBodyContent imported from ../../utils/bodyParser
 
 function CollapsibleBody({ lines, subTasks, onToggleSubTask }) {
   const [expanded, setExpanded] = useState(false)
@@ -388,16 +356,24 @@ function CollapsibleBody({ lines, subTasks, onToggleSubTask }) {
       {/* Sub-task checkboxes */}
       {visibleSubTasks.map((st, i) => (
         <li key={`subtask-${i}`} className="text-xs text-tertiary flex items-start gap-1.5">
-          <input
-            type="checkbox"
-            checked={st.completed}
-            onChange={(e) => {
+          <button
+            onClick={(e) => {
               e.stopPropagation()
               onToggleSubTask(i)
             }}
-            className="mt-0.5 w-3 h-3 rounded border border-muted cursor-pointer hover:border-camel transition-colors"
-          />
-          <span className={st.completed ? 'line-through text-muted' : ''}>{st.text}</span>
+            className={`mt-0.5 w-3 h-3 rounded-sm border transition-colors flex-shrink-0 flex items-center justify-center ${
+              st.completed
+                ? 'bg-camel border-camel'
+                : 'border-muted hover:border-camel'
+            }`}
+          >
+            {st.completed && (
+              <svg className="w-2 h-2 text-base" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              </svg>
+            )}
+          </button>
+          <span className={st.completed ? 'line-through decoration-[2px] decoration-camel/40 text-muted' : ''}>{st.text}</span>
         </li>
       ))}
 
@@ -466,8 +442,16 @@ function JournalEntryRow({ entry, primaryCategory, tagMap = {} }) {
     if (!isCompleted && isTask) {
       // About to mark complete — show completion note input
       setShowCompletionInput(true)
+    } else if (isCompleted && completionComments.length > 0) {
+      // Has completion stamp — confirm before unchecking
+      if (window.confirm('Unchecking will remove the completion note. Continue?')) {
+        // Strip everything after the --- separator (completion comments)
+        const bodyWithoutComments = (entry.body || '').split('\n\n---\n')[0]
+        updateEntry.mutate({ id: entry.id, body: bodyWithoutComments })
+        toggleComplete.mutate({ id: entry.id, completed: false })
+      }
     } else {
-      // Unchecking — just toggle
+      // No completion comments — just toggle
       toggleComplete.mutate({ id: entry.id, completed: !isCompleted })
     }
   }
@@ -479,7 +463,9 @@ function JournalEntryRow({ entry, primaryCategory, tagMap = {} }) {
     const comment = completionNote.trim()
       ? `Completed ${timestamp}: ${completionNote.trim()}`
       : `Completed ${timestamp}`
-    const newBody = (entry.body || '') + separator + comment
+    // Mark all subtasks complete when parent is completed
+    const completedBody = (entry.body || '').replace(/^(\s*)\[\s?\]/gm, '$1[x]')
+    const newBody = completedBody + separator + comment
 
     try {
       await updateEntry.mutateAsync({
@@ -597,7 +583,7 @@ function JournalEntryRow({ entry, primaryCategory, tagMap = {} }) {
               value={editBody}
               onChange={setEditBody}
               onCancel={() => setIsEditing(false)}
-              placeholder="Details..."
+              placeholder="Details (use [] for subtasks)..."
               rows={2}
               inputMode="textarea"
               className="mt-1"
@@ -621,11 +607,14 @@ function JournalEntryRow({ entry, primaryCategory, tagMap = {} }) {
           >
             {/* Header/content with progress badge */}
             <div className="flex items-center gap-2 flex-wrap">
-              <span className={`text-sm ${
-                isCompleted ? 'line-through text-muted' : 'text-secondary'
-              }`}>
-                <MarkdownPreview content={entry.content} maxLength={300} navigateToRef={navigateToRef} />
-              </span>
+              <MarkdownPreview
+                content={entry.content}
+                maxLength={300}
+                navigateToRef={navigateToRef}
+                className={`text-sm ${
+                  isCompleted ? 'line-through decoration-[2px] decoration-camel/40 text-tertiary' : ''
+                }`}
+              />
 
               {/* Sub-task progress badge */}
               {isTask && subTasks.length > 0 && (
@@ -647,7 +636,7 @@ function JournalEntryRow({ entry, primaryCategory, tagMap = {} }) {
 
             {/* Completion comments (always visible when present) */}
             {completionComments.length > 0 && (
-              <div className="mt-2 pt-2 border-t border-subtle">
+              <div className={`mt-1 ${subTasks.length > 0 || otherLines.length > 0 ? 'pt-2 border-t border-subtle' : ''}`}>
                 {completionComments.map((comment, i) => (
                   <p key={i} className="text-xs text-muted italic">
                     {comment}

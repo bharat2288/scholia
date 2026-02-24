@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Link, useParams, useNavigate } from 'react-router-dom'
-import { useRem, useCreateNote, useDeleteGluon, useUpdateNote, useRenameGluon, useMergeGluon } from '../../hooks/useApi'
+import { useQueryClient } from '@tanstack/react-query'
+import { useRem, useCreateNote, useDeleteGluon, useUpdateNote, useRenameGluon, useMergeGluon, useToggleJournalComplete, useUpdateJournalEntry } from '../../hooks/useApi'
 import { TypeIndicator } from '../common/ItemCard'
-import { MarkdownContent, useRefNavigation } from '../../utils/markdown'
+import { MarkdownContent, MarkdownPreview, useRefNavigation } from '../../utils/markdown'
+import { parseBodyContent } from '../../utils/bodyParser'
 
 /**
  * Gluon Page
@@ -61,10 +63,10 @@ function GluonCard({ gluon, showType = true }) {
   const isTask = isJournal && gluon.completed !== null && gluon.completed !== undefined
   const isCompleted = gluon.completed === 1
 
-  // Parse body into sub-bullets for journal entries
-  const bodyLines = isJournal && gluon.body
-    ? gluon.body.split('\n').filter(l => l.trim())
-    : []
+  // Parse body into sub-tasks and regular lines for journal entries
+  const { subTasks, otherLines } = isJournal
+    ? parseBodyContent(gluon.body)
+    : { subTasks: [], otherLines: [] }
 
   return (
     <button
@@ -76,23 +78,43 @@ function GluonCard({ gluon, showType = true }) {
       <div className="flex items-start gap-3">
         {showType && <TypeIndicator type={gluon.type} />}
         <div className="flex-1 min-w-0">
-          {/* Content — strikethrough for completed tasks */}
-          <p className={`group-hover:text-primary transition-colors ${
-            isCompleted ? 'line-through text-muted' : 'text-secondary'
+          {/* Content — strikethrough for completed tasks, ##tags rendered as chips */}
+          <div className={`group-hover:text-primary transition-colors ${
+            isCompleted ? 'line-through decoration-[2px] decoration-camel/40 text-tertiary' : 'text-secondary'
           } ${isJournal ? '' : 'truncate'}`}>
             {isTask && (
               <span className={`inline-block w-3.5 h-3.5 mr-1.5 rounded border align-text-bottom ${
                 isCompleted ? 'bg-camel border-camel' : 'border-muted'
               }`} />
             )}
-            {gluon.content || <span className="text-muted italic">Empty</span>}
-          </p>
+            {gluon.content
+              ? (gluon.content.replace(/\s*##\w+/g, '').trim() || <span className="text-muted italic">Empty</span>)
+              : <span className="text-muted italic">Empty</span>
+            }
+          </div>
 
-          {/* Journal entry body sub-bullets */}
-          {bodyLines.length > 0 && (
+
+          {/* Journal entry body: subtask checkboxes + regular lines */}
+          {(subTasks.length > 0 || otherLines.length > 0) && (
             <ul className="mt-1 space-y-0.5 pl-1">
-              {bodyLines.map((line, i) => (
-                <li key={i} className="text-xs text-tertiary flex items-start gap-1.5">
+              {subTasks.map((st, i) => (
+                <li key={`st-${i}`} className="text-xs text-tertiary flex items-start gap-1.5">
+                  <span className={`mt-0.5 w-3 h-3 rounded-sm border flex-shrink-0 flex items-center justify-center ${
+                    st.completed
+                      ? 'bg-camel border-camel'
+                      : 'border-muted'
+                  }`}>
+                    {st.completed && (
+                      <svg className="w-2 h-2 text-base" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                      </svg>
+                    )}
+                  </span>
+                  <span className={st.completed ? 'line-through decoration-[2px] decoration-camel/40 text-muted' : ''}>{st.text}</span>
+                </li>
+              ))}
+              {otherLines.map((line, i) => (
+                <li key={`line-${i}`} className="text-xs text-tertiary flex items-start gap-1.5">
                   <span className="text-muted mt-0.5">–</span>
                   <span>{line}</span>
                 </li>
@@ -112,6 +134,24 @@ function GluonCard({ gluon, showType = true }) {
             </span>
           )}
         </div>
+
+        {/* Tag chips — right-aligned */}
+        {gluon.tags && gluon.tags.length > 0 && (
+          <div className="flex flex-wrap gap-1 flex-shrink-0 items-start">
+            {gluon.tags.map(tag => (
+              <Link
+                key={tag.id}
+                to={`/gluon/${tag.id}`}
+                onClick={(e) => e.stopPropagation()}
+                className="px-2 py-0.5 rounded text-[10px] font-medium transition-all
+                           bg-camel/10 text-camel/60 border border-camel/15
+                           hover:bg-camel/20 hover:text-camel/80"
+              >
+                {tag.content}
+              </Link>
+            ))}
+          </div>
+        )}
       </div>
     </button>
   )
@@ -185,6 +225,9 @@ export default function Gluon() {
   const updateNote = useUpdateNote()
   const renameGluon = useRenameGluon()
   const mergeGluon = useMergeGluon()
+  const toggleComplete = useToggleJournalComplete()
+  const updateJournalEntry = useUpdateJournalEntry()
+  const queryClient = useQueryClient()
 
   const [isAddingNote, setIsAddingNote] = useState(false)
   const [newNoteContent, setNewNoteContent] = useState('')
@@ -195,19 +238,24 @@ export default function Gluon() {
   // Inline editing state
   const [isEditing, setIsEditing] = useState(false)
   const [editContent, setEditContent] = useState('')
+  const [editBody, setEditBody] = useState('')
   const textareaRef = useRef(null)
+  const editContainerRef = useRef(null)
   const isSavingRef = useRef(false) // Prevent double-save
 
   // Refs to always have latest values in blur handler (avoids stale closure)
   const editContentRef = useRef(editContent)
+  const editBodyRef = useRef(editBody)
   const gluonRef = useRef(gluon)
   editContentRef.current = editContent
+  editBodyRef.current = editBody
   gluonRef.current = gluon
 
   // Sync edit content when gluon loads or changes
   useEffect(() => {
     if (gluon && !isEditing) {
       setEditContent(gluon.content || '')
+      setEditBody(gluon.body || '')
     }
   }, [gluon, isEditing])
 
@@ -254,6 +302,34 @@ export default function Gluon() {
           }
         }, 0)
       } else {
+        // Journal entries use the journal PATCH endpoint
+        if (currentGluon.type === 'journal_entry') {
+          const currentBody = editBodyRef.current
+          const bodyTrimmed = currentBody.trim() || null
+          const originalBody = currentGluon.body || null
+          const contentChanged = trimmed !== originalContent
+          const bodyChanged = bodyTrimmed !== originalBody
+
+          if (contentChanged || bodyChanged) {
+            const updates = {}
+            if (contentChanged) updates.content = trimmed
+            if (bodyChanged) updates.body = bodyTrimmed
+            updateJournalEntry.mutate(
+              { id, ...updates },
+              {
+                onSuccess: () => {
+                  queryClient.invalidateQueries({ queryKey: ['gluons', id] })
+                },
+                onSettled: () => { isSavingRef.current = false }
+              }
+            )
+          } else {
+            isSavingRef.current = false
+          }
+          setIsEditing(false)
+          return
+        }
+
         // Determine if this gluon is renameable (tag or person)
         const isPerson = currentGluon.tags?.some(t => t.content === 'person')
         const isRenameable = currentGluon.type === 'tag' || isPerson
@@ -487,9 +563,104 @@ export default function Gluon() {
                 </Link>
               )}
 
-              {/* Main content - inline editable for notes and tags, read-only for highlights */}
+              {/* Main content - inline editable for notes, tags, journal entries; read-only for highlights */}
               <div className="relative">
-                {gluon.type === 'highlight' ? (
+                {gluon.type === 'journal_entry' ? (
+                  // Journal entries: task checkbox + click-to-edit content + body
+                  isEditing ? (
+                    <div
+                      ref={editContainerRef}
+                      onBlur={(e) => {
+                        if (!editContainerRef.current?.contains(e.relatedTarget)) {
+                          setTimeout(handleSaveEdit, 10)
+                        }
+                      }}
+                    >
+                      <div className="flex items-start gap-3">
+                        {gluon.completed !== null && gluon.completed !== undefined && (
+                          <span className={`mt-2.5 w-5 h-5 rounded border-2 flex-shrink-0 flex items-center justify-center ${
+                            gluon.completed ? 'bg-camel border-camel' : 'border-muted'
+                          }`}>
+                            {gluon.completed === 1 && (
+                              <svg className="w-3.5 h-3.5 text-base" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
+                          </span>
+                        )}
+                        <input
+                          ref={textareaRef}
+                          type="text"
+                          value={editContent}
+                          onChange={(e) => setEditContent(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') { setEditContent(gluon.content || ''); setEditBody(gluon.body || ''); setIsEditing(false) }
+                          }}
+                          className="flex-1 text-lg text-primary leading-relaxed bg-raised/20
+                                     border border-subtle rounded-lg px-3 py-2 outline-none
+                                     focus:border-camel/50 focus:bg-raised/30 transition-colors"
+                          placeholder="Entry content..."
+                        />
+                      </div>
+                      <textarea
+                        value={editBody}
+                        onChange={(e) => setEditBody(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') { setEditContent(gluon.content || ''); setEditBody(gluon.body || ''); setIsEditing(false) }
+                        }}
+                        className="w-full mt-2 text-sm text-primary leading-relaxed bg-raised/20
+                                   border border-subtle rounded-lg px-3 py-2 resize-none outline-none
+                                   focus:border-camel/50 focus:bg-raised/30 transition-colors"
+                        rows={Math.max(2, editBody.split('\n').length + 1)}
+                        placeholder="Details (use [] for subtasks)..."
+                      />
+                      <p className="text-xs text-muted mt-2">
+                        Click outside to save · Esc to cancel
+                      </p>
+                    </div>
+                  ) : (
+                    <div
+                      onClick={() => setIsEditing(true)}
+                      className="cursor-text hover:bg-raised/30 -m-3 p-3 rounded-lg transition-colors group"
+                      title="Click to edit"
+                    >
+                      <div className="flex items-start gap-3">
+                        {gluon.completed !== null && gluon.completed !== undefined && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              toggleComplete.mutate(
+                                { id, completed: !gluon.completed },
+                                { onSuccess: () => queryClient.invalidateQueries({ queryKey: ['gluons', id] }) }
+                              )
+                            }}
+                            className={`mt-1 w-5 h-5 rounded border-2 transition-colors flex-shrink-0 flex items-center justify-center ${
+                              gluon.completed
+                                ? 'bg-camel border-camel'
+                                : 'border-muted hover:border-camel'
+                            }`}
+                          >
+                            {gluon.completed === 1 && (
+                              <svg className="w-3.5 h-3.5 text-base" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
+                          </button>
+                        )}
+                        <p className={`text-lg sm:text-xl leading-relaxed ${
+                          gluon.completed === 1
+                            ? 'line-through decoration-[2px] decoration-camel/40 text-tertiary'
+                            : 'text-primary'
+                        }`}>
+                          {gluon.content || <span className="text-muted italic">Empty</span>}
+                        </p>
+                      </div>
+                      <span className="text-xs text-muted opacity-0 group-hover:opacity-100 transition-opacity mt-1 block">
+                        Click to edit
+                      </span>
+                    </div>
+                  )
+                ) : gluon.type === 'highlight' ? (
                   // Highlights are read-only (extracted text from documents)
                   <p className="text-lg sm:text-xl text-primary leading-relaxed">
                     {gluon.content || <span className="text-muted italic">Empty highlight</span>}
@@ -555,6 +726,68 @@ export default function Gluon() {
                 <NodeSVG className="absolute -top-4 -right-16 hidden lg:block" />
               </div>
 
+              {/* Journal entry body: subtasks + details */}
+              {gluon.type === 'journal_entry' && gluon.body && (() => {
+                const { subTasks, otherLines, completionComments } = parseBodyContent(gluon.body)
+                if (subTasks.length === 0 && otherLines.length === 0 && completionComments.length === 0) return null
+
+                const handleToggleSubTask = async (index) => {
+                  const updated = [...subTasks]
+                  updated[index].completed = !updated[index].completed
+                  const subTaskLines = updated.map(st => `[${st.completed ? 'x' : ' '}] ${st.text}`)
+                  const bodyParts = [...subTaskLines, ...otherLines]
+                  if (completionComments.length > 0) {
+                    bodyParts.push('', '---', ...completionComments)
+                  }
+                  const newBody = bodyParts.join('\n')
+                  await updateJournalEntry.mutateAsync({ id, body: newBody })
+                  queryClient.invalidateQueries({ queryKey: ['gluons', id] })
+                }
+
+                return (
+                  <div className="mt-4 pl-1">
+                    {(subTasks.length > 0 || otherLines.length > 0) && (
+                      <ul className="space-y-1">
+                        {subTasks.map((st, i) => (
+                          <li key={`st-${i}`} className="text-sm text-secondary flex items-start gap-2">
+                            <button
+                              onClick={() => handleToggleSubTask(i)}
+                              className={`mt-1 w-3.5 h-3.5 rounded-sm border flex-shrink-0 flex items-center justify-center transition-colors ${
+                                st.completed
+                                  ? 'bg-camel border-camel'
+                                  : 'border-muted hover:border-camel'
+                              }`}
+                            >
+                              {st.completed && (
+                                <svg className="w-2.5 h-2.5 text-base" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                </svg>
+                              )}
+                            </button>
+                            <span className={st.completed ? 'line-through decoration-[2px] decoration-camel/40 text-muted' : ''}>
+                              {st.text}
+                            </span>
+                          </li>
+                        ))}
+                        {otherLines.map((line, i) => (
+                          <li key={`line-${i}`} className="text-sm text-secondary flex items-start gap-2">
+                            <span className="text-muted mt-0.5">–</span>
+                            <span>{line}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {completionComments.length > 0 && (
+                      <div className={`${subTasks.length > 0 || otherLines.length > 0 ? 'mt-3 pt-3 border-t border-subtle' : ''}`}>
+                        {completionComments.map((comment, i) => (
+                          <p key={i} className="text-sm text-muted italic">{comment}</p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+
               {/* Tags on this gluon */}
               {gluon.tags && gluon.tags.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mt-4">
@@ -596,9 +829,17 @@ export default function Gluon() {
             count={taggedWith.length}
             emptyMessage="Nothing tagged with this yet."
           >
-            {taggedWith.map(item => (
-              <GluonCard key={item.id} gluon={item} />
-            ))}
+            {[...taggedWith]
+              .sort((a, b) => {
+                // Incomplete first, completed last
+                const compDiff = (a.completed || 0) - (b.completed || 0)
+                if (compDiff !== 0) return compDiff
+                // Within same completion status: newest first
+                return (b.created_at || '').localeCompare(a.created_at || '')
+              })
+              .map(item => (
+                <GluonCard key={item.id} gluon={item} />
+              ))}
           </Section>
         )}
 

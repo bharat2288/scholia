@@ -661,8 +661,8 @@ async def get_gluon(gluon_id: str):
 
     # Get the gluon with source title
     cursor = await db.execute("""
-        SELECT g.id, g.type, g.content, g.source_id, g.section_id, g.parent_gluon_id,
-               g.created_at, g.updated_at, s.title as source_title
+        SELECT g.id, g.type, g.content, g.body, g.completed, g.source_id, g.section_id,
+               g.parent_gluon_id, g.created_at, g.updated_at, s.title as source_title
         FROM gluons g
         LEFT JOIN sources s ON g.source_id = s.id
         WHERE g.id = ?
@@ -712,7 +712,26 @@ async def get_gluon(gluon_id: str):
     """, [gluon_id])
     rows = await cursor.fetchall()
     backlink_cols = [desc[0] for desc in cursor.description]
-    gluon["backlinks"] = [dict(zip(backlink_cols, r)) for r in rows]
+    backlinks = [dict(zip(backlink_cols, r)) for r in rows]
+
+    # Fetch tags for each backlink (batch query for efficiency)
+    backlink_ids = [b["id"] for b in backlinks]
+    backlink_tags = {}  # gluon_id -> [{id, content}, ...]
+    if backlink_ids:
+        placeholders = ",".join("?" for _ in backlink_ids)
+        cursor = await db.execute(f"""
+            SELECT l.source_id, t.id, t.content
+            FROM links l
+            JOIN gluons t ON l.target_id = t.id AND t.type = 'tag'
+            WHERE l.source_id IN ({placeholders}) AND l.link_type = 'tag'
+        """, backlink_ids)
+        for src_id, tag_id, tag_content in await cursor.fetchall():
+            backlink_tags.setdefault(src_id, []).append({"id": tag_id, "content": tag_content})
+
+    for b in backlinks:
+        b["tags"] = backlink_tags.get(b["id"], [])
+
+    gluon["backlinks"] = backlinks
 
     # Get child notes (if this is a highlight)
     cursor = await db.execute("""
