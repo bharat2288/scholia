@@ -11,29 +11,7 @@
  */
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { API_BASE } from '../config'
-
-/**
- * Fetch helper with error handling
- */
-async function apiFetch(endpoint, options = {}) {
-  const url = `${API_BASE}${endpoint}`
-
-  const response = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-    ...options,
-  })
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}))
-    throw new Error(error.detail || `API error: ${response.status}`)
-  }
-
-  return response.json()
-}
+import { apiFetch } from '../utils/api'
 
 // ============================================================
 // Models
@@ -148,14 +126,6 @@ export function useDeleteChatConversation() {
 // Utility Functions
 // ============================================================
 
-/**
- * Format cost for display
- * @param {number} cost - Cost in USD
- * @returns {string} - Formatted string like "$0.0012" or "< $0.01"
- */
-export function formatCost(cost) {
-  if (!cost || cost === 0) return '$0.00'
-  if (cost < 0.01) return `$${cost.toFixed(4)}`
-  return `$${cost.toFixed(2)}`
-}
+// Re-export formatCost from shared utils for backward-compatible imports
+export { formatCost } from '../utils/api'
 
