@@ -13,7 +13,6 @@ EPUB extraction:
 - BeautifulSoup for HTML parsing
 """
 
-from .pdf_extractor import extract_pdf
 from .epub_extractor import extract_epub
 
-__all__ = ["extract_pdf", "extract_epub"]
+__all__ = ["extract_epub"]
