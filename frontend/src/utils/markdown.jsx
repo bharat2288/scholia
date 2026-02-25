@@ -41,7 +41,7 @@ export function useRefNavigation() {
 /**
  * Render inline elements: bold, italic, code, [[refs]]
  */
-function renderInlineElements(text, navigateToRef, keyPrefix = '') {
+export function renderInlineElements(text, navigateToRef, keyPrefix = '') {
   if (!text) return text
 
   const elements = []
@@ -303,7 +303,7 @@ export function MarkdownPreview({ content, maxLength = 200, className = "", navi
   }, [content, maxLength, navigateToRef])
 
   return (
-    <span className={`text-secondary ${className}`}>
+    <span className={className || 'text-secondary'}>
       {previewContent}
     </span>
   )

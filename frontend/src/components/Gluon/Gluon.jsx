@@ -3,7 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { useGluon, useCreateNote, useDeleteGluon, useUpdateNote, useRenameGluon, useMergeGluon, useToggleJournalComplete, useUpdateJournalEntry } from '../../hooks/useApi'
 import { TypeIndicator } from '../common/ItemCard'
-import { MarkdownContent, MarkdownPreview, useRefNavigation } from '../../utils/markdown'
+import { MarkdownContent, MarkdownPreview, renderInlineElements, useRefNavigation } from '../../utils/markdown'
 import { parseBodyContent } from '../../utils/bodyParser'
 
 /**
@@ -51,6 +51,7 @@ function NodeSVG({ className = "" }) {
 // Gluon card for displaying linked gluons (notes, highlights, journal entries)
 function GluonCard({ gluon, showType = true }) {
   const navigate = useNavigate()
+  const navigateToRef = useRefNavigation()
 
   const handleDocumentClick = (e) => {
     e.stopPropagation()
@@ -78,7 +79,7 @@ function GluonCard({ gluon, showType = true }) {
       <div className="flex items-start gap-3">
         {showType && <TypeIndicator type={gluon.type} />}
         <div className="flex-1 min-w-0">
-          {/* Content — strikethrough for completed tasks, ##tags rendered as chips */}
+          {/* Content — strikethrough for completed tasks, ##tags rendered as chips, [[refs]] as links */}
           <div className={`group-hover:text-primary transition-colors ${
             isCompleted ? 'line-through decoration-[2px] decoration-camel/40 text-tertiary' : 'text-secondary'
           } ${isJournal ? '' : 'truncate'}`}>
@@ -88,7 +89,8 @@ function GluonCard({ gluon, showType = true }) {
               }`} />
             )}
             {gluon.content
-              ? (gluon.content.replace(/\s*##\w+/g, '').trim() || <span className="text-muted italic">Empty</span>)
+              ? (<MarkdownPreview content={gluon.content} maxLength={300} navigateToRef={navigateToRef} className="text-inherit" />
+                 || <span className="text-muted italic">Empty</span>)
               : <span className="text-muted italic">Empty</span>
             }
           </div>
@@ -110,13 +112,15 @@ function GluonCard({ gluon, showType = true }) {
                       </svg>
                     )}
                   </span>
-                  <span className={st.completed ? 'line-through decoration-[2px] decoration-camel/40 text-muted' : ''}>{st.text}</span>
+                  <span className={st.completed ? 'line-through decoration-[2px] decoration-camel/40 text-muted' : ''}>
+                    {renderInlineElements(st.text, navigateToRef, `st-${i}`)}
+                  </span>
                 </li>
               ))}
               {otherLines.map((line, i) => (
                 <li key={`line-${i}`} className="text-xs text-tertiary flex items-start gap-1.5">
                   <span className="text-muted mt-0.5">–</span>
-                  <span>{line}</span>
+                  <span>{renderInlineElements(line, navigateToRef, `line-${i}`)}</span>
                 </li>
               ))}
             </ul>
