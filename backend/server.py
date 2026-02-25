@@ -111,8 +111,6 @@ app.include_router(sources.router, prefix="/sources", tags=["sources"])
 app.include_router(reading.router, prefix="/reading", tags=["reading"])
 app.include_router(highlights.router, prefix="/highlights", tags=["highlights"])
 app.include_router(gluons.router, prefix="/gluons", tags=["gluons"])
-# Legacy alias for backward compatibility during migration
-app.include_router(gluons.router, prefix="/rems", tags=["rems-legacy"])
 app.include_router(processor.router, prefix="/processor", tags=["processor"])
 app.include_router(runpod.router)  # RunPod integration (prefix defined in router)
 app.include_router(metadata_lookup.router, prefix="/metadata", tags=["metadata"])

@@ -94,12 +94,3 @@ class LinkCreate(BaseModel):
     source_id: str
     target_id: str
     link_type: str = Field(..., pattern="^(reference|tag)$")
-
-
-# Backward compatibility aliases
-RemType = GluonType
-RemBase = GluonBase
-RemCreate = GluonCreate
-RemUpdate = GluonUpdate
-Rem = Gluon
-RemWithLinks = GluonWithLinks

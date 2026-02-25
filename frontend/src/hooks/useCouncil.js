@@ -418,13 +418,3 @@ export function formatCost(cost) {
   return `$${cost.toFixed(2)}`
 }
 
-/**
- * Get model display info
- * @param {string} providerId - Provider ID (anthropic, openai, openrouter)
- * @param {Array} models - Models array from useModels
- * @returns {Object|null} - Model info or null
- */
-export function getModelInfo(providerId, models) {
-  if (!models) return null
-  return models.find(m => m.id === providerId)
-}

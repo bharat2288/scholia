@@ -2903,7 +2903,6 @@ async def get_raw_text(source_id: str):
     }
 
 
-from pydantic import BaseModel
 
 class RawTextUpdate(BaseModel):
     content: str

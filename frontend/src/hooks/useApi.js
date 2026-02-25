@@ -43,8 +43,6 @@ export function useSources() {
   })
 }
 
-// Backward compatibility alias
-export const useDocuments = useSources
 
 /**
  * Fetch a single source by ID
@@ -57,8 +55,6 @@ export function useSource(id) {
   })
 }
 
-// Backward compatibility alias
-export const useDocument = useSource
 
 /**
  * Import a new source (PDF/EPUB)
@@ -89,8 +85,6 @@ export function useImportSource() {
   })
 }
 
-// Backward compatibility alias
-export const useImportDocument = useImportSource
 
 /**
  * Update source metadata
@@ -111,8 +105,6 @@ export function useUpdateSource() {
   })
 }
 
-// Backward compatibility alias
-export const useUpdateDocument = useUpdateSource
 
 /**
  * Get gluon stats for a source (highlight/note counts)
@@ -126,8 +118,6 @@ export function useSourceGluonStats(sourceId) {
   })
 }
 
-// Backward compatibility alias
-export const useDocumentGluonStats = useSourceGluonStats
 
 /**
  * Delete a source
@@ -155,8 +145,6 @@ export function useDeleteSource() {
   })
 }
 
-// Backward compatibility alias
-export const useDeleteDocument = useDeleteSource
 
 /**
  * Refresh library - scan sources folder for new/updated sources
@@ -173,8 +161,6 @@ export function useRefreshSources() {
   })
 }
 
-// Backward compatibility alias
-export const useRefreshDocuments = useRefreshSources
 
 /**
  * Clip a URL and add as web source
@@ -344,8 +330,6 @@ export function useSourceContent(id) {
   })
 }
 
-// Backward compatibility alias
-export const useDocumentContent = useSourceContent
 
 /**
  * Update reading position
@@ -437,8 +421,6 @@ export function useSourceNotes(sourceId) {
   })
 }
 
-// Backward compatibility alias
-export const useDocumentNotes = useSourceNotes
 
 /**
  * Fetch all notes system-wide (for Knowledge view)
@@ -462,7 +444,6 @@ export function useAllHighlights() {
 
 /**
  * Fetch a single gluon with all its links
- * (Aliased as useRem for backward compatibility)
  */
 export function useGluon(gluonId) {
   return useQuery({
@@ -472,8 +453,6 @@ export function useGluon(gluonId) {
   })
 }
 
-// Backward compatibility alias
-export const useRem = useGluon
 
 /**
  * Fetch all tags
@@ -527,8 +506,6 @@ export function useGluonSearch(query, type = null) {
   })
 }
 
-// Backward compatibility alias
-export const useRemSearch = useGluonSearch
 
 /**
  * Find gluon by exact content (for [[ref]] navigation)

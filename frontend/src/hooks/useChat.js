@@ -159,13 +159,3 @@ export function formatCost(cost) {
   return `$${cost.toFixed(2)}`
 }
 
-/**
- * Get model display info
- * @param {string} modelId - Model ID (claude-sonnet, gpt-4o, etc.)
- * @param {Array} models - Models array from useChatModels
- * @returns {Object|null} - Model info or null
- */
-export function getModelInfo(modelId, models) {
-  if (!models) return null
-  return models.find(m => m.id === modelId)
-}

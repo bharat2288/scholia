@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Link, useParams, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { useRem, useCreateNote, useDeleteGluon, useUpdateNote, useRenameGluon, useMergeGluon, useToggleJournalComplete, useUpdateJournalEntry } from '../../hooks/useApi'
+import { useGluon, useCreateNote, useDeleteGluon, useUpdateNote, useRenameGluon, useMergeGluon, useToggleJournalComplete, useUpdateJournalEntry } from '../../hooks/useApi'
 import { TypeIndicator } from '../common/ItemCard'
 import { MarkdownContent, MarkdownPreview, useRefNavigation } from '../../utils/markdown'
 import { parseBodyContent } from '../../utils/bodyParser'
@@ -219,7 +219,7 @@ export default function Gluon() {
   const { id } = useParams()
   const navigate = useNavigate()
   const navigateToRef = useRefNavigation()
-  const { data: gluon, isLoading, error } = useRem(id)
+  const { data: gluon, isLoading, error } = useGluon(id)
   const createNote = useCreateNote()
   const deleteGluon = useDeleteGluon()
   const updateNote = useUpdateNote()
