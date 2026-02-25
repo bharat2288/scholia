@@ -157,7 +157,7 @@ def _has_equation_images(page) -> bool:
             # Equation-like proportions: wide and short
             if height > 0 and width / height > 3 and height < 100:
                 return True
-        except:
+        except (ValueError, TypeError, KeyError):
             continue
 
     return False

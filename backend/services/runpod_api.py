@@ -102,7 +102,7 @@ class RunPodClient:
                 try:
                     error_body = response.json()
                     error_msg = error_body.get("error", response.text)
-                except:
+                except (ValueError, KeyError):
                     error_msg = response.text
                 raise RuntimeError(f"RunPod API error ({response.status_code}): {error_msg}")
             return response.json()

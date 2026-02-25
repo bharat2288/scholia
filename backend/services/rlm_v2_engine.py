@@ -37,6 +37,41 @@ from services.rlm_tools import (
 # Maximum stdout captured per execution to prevent context blowout
 MAX_STDOUT_LENGTH = 3000
 
+# Safe builtins for exec() sandbox — no file I/O, no imports, no eval
+SAFE_BUILTINS = {
+    # Types and constructors
+    "True": True, "False": False, "None": None,
+    "int": int, "float": float, "str": str, "bool": bool,
+    "list": list, "dict": dict, "tuple": tuple, "set": set, "frozenset": frozenset,
+    "bytes": bytes, "bytearray": bytearray, "complex": complex,
+    # Iteration and ranges
+    "range": range, "enumerate": enumerate, "zip": zip, "map": map, "filter": filter,
+    "reversed": reversed, "sorted": sorted, "iter": iter, "next": next,
+    # Length, math, comparison
+    "len": len, "abs": abs, "min": min, "max": max, "sum": sum, "round": round,
+    "pow": pow, "divmod": divmod,
+    # String and repr
+    "print": print, "repr": repr, "str": str, "format": format, "chr": chr, "ord": ord,
+    # Type checking
+    "isinstance": isinstance, "issubclass": issubclass, "type": type,
+    "callable": callable, "hasattr": hasattr, "getattr": getattr, "setattr": setattr,
+    # Containers
+    "any": any, "all": all, "hash": hash, "id": id,
+    # Exceptions (needed for try/except in generated code)
+    "Exception": Exception, "ValueError": ValueError, "TypeError": TypeError,
+    "KeyError": KeyError, "IndexError": IndexError, "StopIteration": StopIteration,
+    "RuntimeError": RuntimeError, "AttributeError": AttributeError,
+}
+
+# Patterns that indicate dangerous operations in LLM-generated code
+BLOCKED_CODE_PATTERNS = [
+    "import os", "import sys", "import subprocess", "import shutil",
+    "import socket", "import http", "import urllib",
+    "__import__", "importlib", "eval(", "compile(",
+    "open(", "exec(",  # no nested exec
+    "os.system", "os.popen", "os.exec",
+]
+
 # Maximum code block length we'll execute
 # Generous limit because FINAL_ANSWER() embeds the full findings text
 MAX_CODE_LENGTH = 30000
@@ -499,6 +534,12 @@ class RLMV2Engine:
                 return "FINAL_ANSWER captured (parsed directly)", "", None
             return "", "", f"Code too long ({len(code)} chars, max {MAX_CODE_LENGTH})"
 
+        # Block dangerous patterns before exec
+        code_lower = code.lower()
+        for pattern in BLOCKED_CODE_PATTERNS:
+            if pattern.lower() in code_lower:
+                return "", "", f"Blocked: code contains disallowed pattern '{pattern}'"
+
         loop = asyncio.get_event_loop()
         engine = self
 
@@ -517,11 +558,21 @@ class RLMV2Engine:
             )
             return future.result(timeout=300)
 
-        # Build the exec namespace with all functions
+        # Build the exec namespace with sandboxed builtins
+        # Pre-inject safe stdlib modules so LLM code can use them without import
+        import json as _json
+        import math as _math
+        import collections as _collections
+
         exec_namespace = {
             **self.namespace,
             "llm_query": llm_query_sync,
             "llm_query_batch": llm_query_batch_sync,
+            "__builtins__": SAFE_BUILTINS,
+            "re": re,
+            "json": _json,
+            "math": _math,
+            "collections": _collections,
         }
 
         # Run exec() in a thread so sync sub-LLM calls can block
