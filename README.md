@@ -11,35 +11,37 @@ A local-first research knowledge system for reading, annotating, and connecting 
 
 ## Demos
 
+> Click any screenshot to watch the full demo video.
+
 ### Library
 Browse, search, filter, and sort your sources — PDFs, web articles, tweets, video transcripts — in card or row view.
 
-https://github.com/bharat2288/scholia/releases/download/demos-v1/library-browse.mp4
+[![Library demo](screenshots/library.png)](https://github.com/bharat2288/scholia/releases/download/demos-v1/library-browse.mp4)
 
 ### Reader + Highlights
 Three-pane reading interface with Table of Contents navigation, multi-color highlighting, and annotations.
 
-https://github.com/bharat2288/scholia/releases/download/demos-v1/reader-highlights.mp4
+[![Reader highlights demo](screenshots/reader-highlights.png)](https://github.com/bharat2288/scholia/releases/download/demos-v1/reader-highlights.mp4)
 
 ### Reader + AI Chat
 Per-document AI conversations with history, analytical presets, model selection, and Council mode.
 
-https://github.com/bharat2288/scholia/releases/download/demos-v1/reader-chat.mp4
+[![Reader chat demo](screenshots/reader-chat.png)](https://github.com/bharat2288/scholia/releases/download/demos-v1/reader-chat.mp4)
 
 ### Knowledge Hub
 Cross-document knowledge browsing — notes, highlights, tags, people, journal, and chat history.
 
-https://github.com/bharat2288/scholia/releases/download/demos-v1/knowledge-browse.mp4
+[![Knowledge hub demo](screenshots/knowledge.png)](https://github.com/bharat2288/scholia/releases/download/demos-v1/knowledge-browse.mp4)
 
 ### Research Sessions
 Multi-document AI research with agentic tool use, evidence traces, and source cross-referencing.
 
-https://github.com/bharat2288/scholia/releases/download/demos-v1/research-sessions.mp4
+[![Research sessions demo](screenshots/research-session.png)](https://github.com/bharat2288/scholia/releases/download/demos-v1/research-sessions.mp4)
 
 ### Section Editor
 Three-pane editing with PDF reference, syntax-highlighted markers, and structure analysis.
 
-https://github.com/bharat2288/scholia/releases/download/demos-v1/section-editor.mp4
+[![Section editor demo](screenshots/reader-highlights.png)](https://github.com/bharat2288/scholia/releases/download/demos-v1/section-editor.mp4)
 
 ---
 
