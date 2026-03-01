@@ -31,6 +31,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 import uuid
 import re
+import aiosqlite
 
 from database import get_db
 
@@ -1168,7 +1169,7 @@ async def merge_gluon(gluon_id: str, body: GluonMerge):
             "DELETE FROM gluons_fts WHERE rowid = (SELECT rowid FROM gluons WHERE id = ?)",
             [gluon_id]
         )
-    except Exception:
+    except (aiosqlite.OperationalError, ValueError):
         pass  # FTS entry may not exist for old data
 
     # Step 7: Clean up any remaining outgoing links from old gluon
@@ -1288,7 +1289,7 @@ async def delete_gluon(gluon_id: str, force: bool = Query(False, description="Fo
         # Delete from FTS (use rowid directly, ignore if not in FTS)
         try:
             await db.execute("DELETE FROM gluons_fts WHERE rowid = ?", [gluon_rowid])
-        except Exception:
+        except (aiosqlite.OperationalError, ValueError):
             pass  # FTS entry may not exist for old data
 
         # Delete links (both directions)

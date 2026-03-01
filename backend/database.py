@@ -569,6 +569,11 @@ async def _create_schema():
         CREATE INDEX IF NOT EXISTS idx_sources_year ON sources(year)
     """)
 
+    # Index for author filtering/sorting
+    await _db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_sources_author_display ON sources(author_display)
+    """)
+
     # UNIQUE constraint on content_path to prevent duplicates on refresh
     await _db.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS idx_sources_content_path

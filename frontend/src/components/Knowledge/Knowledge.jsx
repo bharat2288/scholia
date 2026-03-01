@@ -43,11 +43,7 @@ export default function Knowledge() {
     setActiveTabState(tab)
     setSearchParams(prev => {
       const next = new URLSearchParams(prev)
-      if (tab === 'notes') {
-        next.delete('tab')
-      } else {
-        next.set('tab', tab)
-      }
+      next.set('tab', tab)
       return next
     }, { replace: true })
   }

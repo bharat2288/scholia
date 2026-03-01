@@ -27,6 +27,7 @@ from collections import defaultdict
 import uuid
 
 import re
+import aiosqlite
 
 from database import get_db
 from routers.gluons import get_or_create_tag, process_links_in_content
@@ -520,7 +521,7 @@ async def delete_journal_entry(entry_id: str):
     # Delete FTS entry
     try:
         await db.execute("DELETE FROM gluons_fts WHERE rowid = ?", [gluon_rowid])
-    except Exception:
+    except (aiosqlite.OperationalError, ValueError):
         pass
 
     # Delete links (both directions)

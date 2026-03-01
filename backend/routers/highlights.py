@@ -123,7 +123,7 @@ async def get_highlight(highlight_id: str, context_chars: int = Query(50, ge=0, 
 
             context_before = full_text[context_start:start]
             context_after = full_text[end:context_end]
-        except Exception:
+        except (FileNotFoundError, OSError, IndexError, TypeError):
             pass
 
     return {
