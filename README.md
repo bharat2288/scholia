@@ -16,32 +16,32 @@ A local-first research knowledge system for reading, annotating, and connecting 
 ### Library
 Browse, search, filter, and sort your sources — PDFs, web articles, tweets, video transcripts — in card or row view.
 
-[![Library demo](https://img.youtube.com/vi/9IpuMPofeaA/maxresdefault.jpg)](https://youtu.be/9IpuMPofeaA)
+[![Library demo](https://img.youtube.com/vi/9IpuMPofeaA/hqdefault.jpg)](https://youtu.be/9IpuMPofeaA)
 
 ### Reader + Highlights
 Three-pane reading interface with Table of Contents navigation, multi-color highlighting, and annotations.
 
-[![Reader highlights demo](https://img.youtube.com/vi/Eb3Vds7xuvc/maxresdefault.jpg)](https://youtu.be/Eb3Vds7xuvc)
+[![Reader highlights demo](https://img.youtube.com/vi/Eb3Vds7xuvc/hqdefault.jpg)](https://youtu.be/Eb3Vds7xuvc)
 
 ### Reader + AI Chat
 Per-document AI conversations with history, analytical presets, model selection, and Council mode.
 
-[![Reader chat demo](https://img.youtube.com/vi/mFFDCuspCjY/maxresdefault.jpg)](https://youtu.be/mFFDCuspCjY)
+[![Reader chat demo](https://img.youtube.com/vi/mFFDCuspCjY/hqdefault.jpg)](https://youtu.be/mFFDCuspCjY)
 
 ### Knowledge Hub
 Cross-document knowledge browsing — notes, highlights, tags, people, journal, and chat history.
 
-[![Knowledge hub demo](https://img.youtube.com/vi/GPMcl3yoc_M/maxresdefault.jpg)](https://youtu.be/GPMcl3yoc_M)
+[![Knowledge hub demo](https://img.youtube.com/vi/GPMcl3yoc_M/hqdefault.jpg)](https://youtu.be/GPMcl3yoc_M)
 
 ### Research Sessions
 Multi-document AI research with agentic tool use, evidence traces, and source cross-referencing.
 
-[![Research sessions demo](https://img.youtube.com/vi/NskWBlqMcDE/maxresdefault.jpg)](https://youtu.be/NskWBlqMcDE)
+[![Research sessions demo](https://img.youtube.com/vi/NskWBlqMcDE/hqdefault.jpg)](https://youtu.be/NskWBlqMcDE)
 
 ### Section Editor
 Three-pane editing with PDF reference, syntax-highlighted markers, and structure analysis.
 
-[![Section editor demo](https://img.youtube.com/vi/veeLocTO4pE/maxresdefault.jpg)](https://youtu.be/veeLocTO4pE)
+[![Section editor demo](https://img.youtube.com/vi/veeLocTO4pE/hqdefault.jpg)](https://youtu.be/veeLocTO4pE)
 
 ---
 
