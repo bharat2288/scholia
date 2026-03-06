@@ -1,0 +1,57 @@
+# Scholia screenshot capture config
+# Usage: python C:\Users\bhara\dev\screenshot-tool\capture.py screenshots.yaml
+#
+# Existing manual screenshots (already in screenshots/):
+#   library.png, reader-chat.png, reader-video.png,
+#   research-session.png, research-metadata.png
+#
+# This config captures views that are missing from the manual set.
+
+base_url: http://localhost:5176
+output_dir: screenshots
+
+viewport:
+  width: 1440
+  height: 820
+
+captures:
+  # Reader with highlights/annotations sidebar visible
+  - name: reader-highlights
+    description: "Three-pane reader with annotations sidebar"
+    path: /
+    actions:
+      # Widen sidebar from default 320px to 420px before navigating
+      - evaluate: "localStorage.setItem('scholia-reader-widths', JSON.stringify({toc: 220, sidebar: 420}))"
+    wait_for: "div.grid.grid-cols-1"
+    delay: 0.5
+
+  # Now navigate to reader (picks up the new widths on mount)
+  - name: reader-highlights
+    description: "Three-pane reader with wider annotations sidebar"
+    path: /read/6be9397a
+    wait_for: "main.h-full"
+    delay: 2.0
+
+  # Knowledge / Gluon view — linked notes and backlinks
+  - name: knowledge
+    description: "Gluon knowledge view with linked notes and tags"
+    path: /knowledge
+    wait_for: "div.space-y-3"
+    delay: 1.5
+
+  # Reader with Chat tab showing preset quick-actions
+  - name: presets
+    description: "Reader with analytical preset quick-actions visible"
+    path: /read/6be9397a
+    actions:
+      - click: "button:has-text('Chat')"
+      - wait: 1.0
+    wait_for: "main.h-full"
+    delay: 1.0
+
+  # Full library hero
+  - name: library
+    description: "Library card view with populated sources"
+    path: /
+    wait_for: "div.grid.grid-cols-1"
+    delay: 1.0

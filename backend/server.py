@@ -51,11 +51,16 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     await init_db()
+    # Init eval database (separate from library.db)
+    from eval.db import init_eval_db
+    await init_eval_db()
     # Restore any queued/processing jobs from previous server run
     processor.start_processing_worker()
     yield
     # Shutdown
     processor.stop_processing_worker()
+    from eval.db import close_eval_db
+    await close_eval_db()
     await close_db()
 
 
@@ -104,7 +109,7 @@ async def health():
 
 
 # Import routers
-from routers import sources, reading, highlights, gluons, processor, runpod, metadata_lookup, council, chat, sessions, whatsapp, journal
+from routers import sources, reading, highlights, gluons, processor, runpod, metadata_lookup, council, chat, sessions, whatsapp, journal, eval_dashboard
 
 # Register routers
 app.include_router(sources.router, prefix="/sources", tags=["sources"])
@@ -119,6 +124,7 @@ app.include_router(chat.router, prefix="/chat", tags=["chat"])
 app.include_router(sessions.router, prefix="/sessions", tags=["sessions"])
 app.include_router(whatsapp.router)  # WhatsApp webhook (prefix defined in router)
 app.include_router(journal.router, prefix="/journal", tags=["journal"])
+app.include_router(eval_dashboard.router, prefix="/eval", tags=["eval"])
 
 
 # Note: RunPod endpoints now handled by routers/runpod.py

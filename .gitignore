@@ -44,5 +44,8 @@ nul
 # Windows artifacts
 *.lnk
 
+# Eval reports (generated, not tracked)
+eval/reports/
+
 # Build artifacts
 *.log

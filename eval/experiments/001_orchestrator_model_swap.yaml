@@ -1,0 +1,120 @@
+# Experiment 001: Orchestrator Model Swap
+# ========================================
+# Compare cheaper orchestrator models against Sonnet baseline.
+# Hold sub-LLM (Haiku) and synthesis (Opus) constant.
+#
+# Hypothesis: The orchestrator writes Python code — a task where
+# cheaper coding-specialist models might perform comparably to Sonnet.
+# If quality stays above threshold, this is the biggest cost lever.
+#
+# Sessions:
+#   d69f2e6e — RLM Research (11 sources: papers, web articles, threads, media)
+#   79e20fa6 — The Linguistics of AI (7 sources: theoretical works on meaning, agency, computation)
+
+name: "Orchestrator Model Swap"
+description: "Compare cheap orchestrator models against Sonnet baseline, holding sub-LLM and synthesis constant"
+dimensions: [model_selection]
+
+queries:
+  # --- RLM Research session (d69f2e6e) ---
+
+  - session_id: "d69f2e6e"
+    query_text: "What is the core architectural insight of Recursive Language Models, and how does it differ from standard RAG approaches?"
+    category: factual
+    difficulty: easy
+    expected_signals:
+      - "documents stay outside context window"
+      - "LLM writes code to explore documents"
+      - "contrast with chunk-based retrieval"
+      - "mentions tool use or REPL sandbox"
+
+  - session_id: "d69f2e6e"
+    query_text: "What are the main cost drivers in a three-tier RLM architecture (orchestrator, sub-LLM, synthesis), and which tier offers the most room for optimization?"
+    category: analytical
+    difficulty: moderate
+    expected_signals:
+      - "identifies per-tier cost breakdown"
+      - "discusses token usage patterns per tier"
+      - "references orchestrator as code-writing tier"
+      - "synthesis tier uses most expensive model"
+      - "sub-LLM calls multiply with document count"
+
+  - session_id: "d69f2e6e"
+    query_text: "How do the ideas in 'Improving Deep Agents with Harness Engineering' and the RLM paper relate to each other? Where do they converge and diverge?"
+    category: comparative
+    difficulty: hard
+    expected_signals:
+      - "identifies harness engineering concepts"
+      - "connects to RLM scaffold/loop design"
+      - "notes shared concern with agent architecture"
+      - "distinguishes scope or emphasis of each"
+      - "cites specific claims from both sources"
+
+  # --- The Linguistics of AI session (79e20fa6) ---
+
+  - session_id: "79e20fa6"
+    query_text: "What does Geoffrey Hinton argue about the nature of understanding in AI systems, and how does this relate to the linguistic anthropology perspective on meaning?"
+    category: analytical
+    difficulty: hard
+    expected_signals:
+      - "summarizes Hinton's position on understanding"
+      - "references linguistic anthropology framework"
+      - "connects computational and interpretive views"
+      - "addresses whether AI 'understands' language"
+      - "cites specific arguments from both sources"
+
+  - session_id: "79e20fa6"
+    query_text: "Across these sources, what distinct positions emerge on the relationship between computation and meaning? Synthesize the key tensions."
+    category: synthesis
+    difficulty: hard
+    expected_signals:
+      - "covers multiple documents (at least 3-4)"
+      - "identifies competing frameworks"
+      - "addresses computation vs interpretation tension"
+      - "references distributed agency concept"
+      - "organized thematically not source-by-source"
+      - "preserves theoretical nuance"
+
+  - session_id: "79e20fa6"
+    query_text: "What is the concept of 'distributed agency' as discussed in these sources, and what are its implications for how we think about AI systems?"
+    category: factual
+    difficulty: moderate
+    expected_signals:
+      - "defines distributed agency from source material"
+      - "connects to AI/computational context"
+      - "cites the Distributed Agency document"
+      - "discusses implications for human-AI interaction"
+
+configs:
+  - name: baseline-sonnet
+    orchestrator_model: claude-sonnet
+    sub_model: claude-haiku
+    synthesis_model: claude-opus
+
+  - name: deepseek-v3-orch
+    orchestrator_model: deepseek-v3
+    sub_model: claude-haiku
+    synthesis_model: claude-opus
+
+  - name: deepseek-v31-orch
+    orchestrator_model: deepseek-v3.1
+    sub_model: claude-haiku
+    synthesis_model: claude-opus
+
+  - name: qwen3-coder-orch
+    orchestrator_model: qwen3-coder
+    sub_model: claude-haiku
+    synthesis_model: claude-opus
+
+  - name: grok-code-orch
+    orchestrator_model: grok-code
+    sub_model: claude-haiku
+    synthesis_model: claude-opus
+
+  - name: gpt41-mini-orch
+    orchestrator_model: gpt-4.1-mini
+    sub_model: claude-haiku
+    synthesis_model: claude-opus
+
+repetitions: 1
+max_experiment_cost_usd: 30.00
