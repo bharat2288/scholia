@@ -57,6 +57,38 @@ export function renderInlineElements(text, navigateToRef, keyPrefix = '') {
   }
 
   while (i < text.length) {
+    // Check for [TIMESTAMP HH:MM:SS] — clickable link that seeks YouTube player
+    if (text.slice(i, i + 11) === '[TIMESTAMP ') {
+      const endTs = text.indexOf(']', i + 11)
+      if (endTs !== -1) {
+        const tsValue = text.slice(i + 11, endTs).trim()  // "HH:MM:SS" or "MM:SS"
+        const parts = tsValue.split(':').map(Number)
+        let totalSeconds = 0
+        if (parts.length === 3) totalSeconds = parts[0] * 3600 + parts[1] * 60 + parts[2]
+        else if (parts.length === 2) totalSeconds = parts[0] * 60 + parts[1]
+
+        flushBuffer()
+        elements.push(
+          <button
+            key={`${keyPrefix}-ts-${key++}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              // Seek YouTube player via global ref (set in Reader's YouTubePlayer)
+              if (window.__scholiaYouTubePlayer?.seekTo) {
+                window.__scholiaYouTubePlayer.seekTo(totalSeconds, true)
+              }
+            }}
+            className="text-camel bg-camel/10 px-1.5 py-0.5 rounded text-xs font-mono hover:bg-camel/20 transition-colors cursor-pointer"
+            title={`Jump to ${tsValue}`}
+          >
+            {tsValue}
+          </button>
+        )
+        i = endTs + 1
+        continue
+      }
+    }
+
     // Check for [[ref]]
     if (text.slice(i, i + 2) === '[[') {
       const endRef = text.indexOf(']]', i + 2)
@@ -256,6 +288,12 @@ export function MarkdownContent({ content, className = "", navigateToRef, inheri
           </blockquote>
         )
         i = j - 1  // -1 because the for loop will increment
+        continue
+      }
+
+      // Horizontal rule (---, ***, ___)
+      if (line.trim().match(/^[-*_]{3,}$/)) {
+        elements.push(<hr key={key++} className="border-subtle my-4" />)
         continue
       }
 

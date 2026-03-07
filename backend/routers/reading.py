@@ -150,6 +150,22 @@ async def get_source_content(
             elif content_field == "editors":
                 result[content_field] = metadata.get("editors")
 
+    # Include source analyses (Summary, Key Claims, etc.)
+    cursor = await db.execute(
+        """SELECT id, analysis_type, display_name, content, model, cost_usd,
+                  tokens_input, tokens_output, created_at
+           FROM source_analyses
+           WHERE source_id = ?
+           ORDER BY created_at""",
+        [source_id]
+    )
+    analysis_rows = await cursor.fetchall()
+    analysis_cols = [desc[0] for desc in cursor.description]
+    result["analyses"] = [
+        dict(zip(analysis_cols, row))
+        for row in analysis_rows
+    ]
+
     # Include sections if requested
     if include_sections:
         cursor = await db.execute(

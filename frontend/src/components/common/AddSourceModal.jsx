@@ -6,10 +6,15 @@
  * Note tab handles markdown file upload with AI metadata suggestions.
  */
 
-import { useState, useMemo, useRef } from 'react'
-import { useClipUrl, useClipTweet, useClipVideo, useTriageRepo, useClipRepo, usePreviewNote, useImportNote, useFindOrCreateTags, useFindOrCreatePeople } from '../../hooks/useApi'
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react'
+import { useClipUrl, useClipTweet, useClipVideo, useTriageRepo, useClipRepo, usePreviewNote, useImportNote, useFindOrCreateTags, useFindOrCreatePeople, useAnalysisTypes } from '../../hooks/useApi'
+import { useChatModels } from '../../hooks/useChat'
+import { useQueryClient } from '@tanstack/react-query'
 import TagInput from './TagInput'
 import PersonInput from './PersonInput'
+import { MarkdownContent } from '../../utils/markdown'
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8200'
 
 // URL type detection patterns
 const URL_PATTERNS = {
@@ -94,11 +99,35 @@ function ClipUrlTab({ onClose, onSuccess }) {
   const [selectedFiles, setSelectedFiles] = useState(new Set())
   const [showAllFiles, setShowAllFiles] = useState(false)
 
+  // Video analysis state
+  const [selectedAnalyses, setSelectedAnalyses] = useState(['summary', 'key_claims'])
+  const [analysisModel, setAnalysisModel] = useState('claude-opus')
+  const [analysisProgress, setAnalysisProgress] = useState(null) // SSE events
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [analysisDone, setAnalysisDone] = useState(false)
+  const [triageMode, setTriageMode] = useState(false) // triage vs direct read
+  const [triageContent, setTriageContent] = useState(null) // Key Claims markdown for triage popup
+  const [isDismissing, setIsDismissing] = useState(false)
+  const eventSourceRef = useRef(null)
+
+  const { data: analysisTypes } = useAnalysisTypes()
+  const { data: chatModels } = useChatModels()
+  const queryClient = useQueryClient()
+
   const clipUrl = useClipUrl()
   const clipTweet = useClipTweet()
   const clipVideo = useClipVideo()
   const triageRepo = useTriageRepo()
   const clipRepo = useClipRepo()
+
+  // Cleanup SSE on unmount
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+      }
+    }
+  }, [])
 
   const detectedType = useMemo(() => {
     let testUrl = url.trim()
@@ -125,8 +154,73 @@ function ClipUrlTab({ onClose, onSuccess }) {
     return total
   }, [selectedFiles, triageResult])
 
-  const handleSubmit = async (e) => {
-    e.preventDefault()
+  // Start SSE stream for video analysis after clip
+  const startAnalysisStream = useCallback((sourceId, isTriage = false) => {
+    const typesToRun = isTriage ? ['key_claims'] : selectedAnalyses
+    if (typesToRun.length === 0) return
+
+    setIsAnalyzing(true)
+    setAnalysisDone(false)
+    setTriageContent(null)
+    setAnalysisProgress({ stage: 'starting', message: isTriage ? 'Running Key Claims analysis...' : 'Starting analysis...' })
+
+    const typesParam = typesToRun.join(',')
+    const sseUrl = `${API_BASE}/sources/${sourceId}/analyze/stream?types=${typesParam}&model=${analysisModel}`
+
+    const es = new EventSource(sseUrl)
+    eventSourceRef.current = es
+
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        setAnalysisProgress(data)
+
+        if (data.stage === 'complete') {
+          es.close()
+          eventSourceRef.current = null
+          setIsAnalyzing(false)
+
+          if (isTriage) {
+            // Fetch the Key Claims content for the triage popup
+            fetch(`${API_BASE}/sources/${sourceId}/analyses`)
+              .then(r => { if (!r.ok) throw new Error(); return r.json() })
+              .then(analyses => {
+                const keyClaims = analyses.find(a => a.analysis_type === 'key_claims')
+                setTriageContent(keyClaims?.content || 'No key claims generated.')
+                setAnalysisDone(true)
+              })
+              .catch(() => {
+                setTriageContent('Failed to load key claims.')
+                setAnalysisDone(true)
+              })
+          } else {
+            setAnalysisDone(true)
+            // Invalidate caches for Reader and library
+            queryClient.invalidateQueries({ queryKey: ['reading', sourceId] })
+            queryClient.invalidateQueries({ queryKey: ['sources', sourceId, 'analyses'] })
+            queryClient.invalidateQueries({ queryKey: ['sources'] })
+          }
+        }
+
+        if (data.status === 'error') {
+          setError(prev => prev ? `${prev}\n${data.message}` : data.message)
+        }
+      } catch (err) {
+          if (err instanceof SyntaxError) return
+          console.error('SSE message handling error:', err)
+        }
+    }
+
+    es.onerror = () => {
+      es.close()
+      eventSourceRef.current = null
+      setIsAnalyzing(false)
+      setError('Analysis stream disconnected')
+    }
+  }, [selectedAnalyses, analysisModel, queryClient])
+
+  // Shared clip logic — isTriage param used for video mode
+  const handleClip = async (isTriage = false) => {
     setError(null)
 
     if (!url.trim()) {
@@ -149,7 +243,6 @@ function ClipUrlTab({ onClose, onSuccess }) {
           intent: intent.trim() || undefined,
         })
         setTriageResult(result)
-        // Pre-select all recommended files
         setSelectedFiles(new Set(result.recommended_files.map(f => f.path)))
       } catch (err) {
         setError(err.message || 'Failed to analyze repository')
@@ -188,6 +281,20 @@ function ClipUrlTab({ onClose, onSuccess }) {
           title: title.trim() || undefined
         })
       }
+      // Video: start analysis stream (triage or full)
+      if (urlType === 'video' && result?.id) {
+        if (isTriage) {
+          setSuccessResult(result)
+          startAnalysisStream(result.id, true)
+          return
+        }
+        if (selectedAnalyses.length > 0) {
+          setSuccessResult(result)
+          startAnalysisStream(result.id, false)
+          return
+        }
+      }
+
       onSuccess?.(result)
 
       if (result?.warning) {
@@ -201,6 +308,15 @@ function ClipUrlTab({ onClose, onSuccess }) {
     }
   }
 
+  // Called by video buttons directly (bypasses form submit)
+  const handleSubmitWithMode = (isTriage) => handleClip(isTriage)
+
+  // Called by form submit (non-video types)
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    handleClip(false)
+  }
+
   const handleDismissWarning = () => {
     setWarning(null)
     onClose()
@@ -211,6 +327,33 @@ function ClipUrlTab({ onClose, onSuccess }) {
     setSelectedFiles(new Set())
     setShowAllFiles(false)
     setError(null)
+  }
+
+  // Triage: Keep — source stays, optionally run remaining analyses (Summary)
+  const handleTriageKeep = () => {
+    const sourceId = successResult?.id
+    if (!sourceId) return
+    queryClient.invalidateQueries({ queryKey: ['reading', sourceId] })
+    queryClient.invalidateQueries({ queryKey: ['sources', sourceId, 'analyses'] })
+    queryClient.invalidateQueries({ queryKey: ['sources'] })
+    onSuccess?.(successResult)
+    onClose()
+  }
+
+  // Triage: Dismiss — delete source + analyses
+  const handleTriageDismiss = async () => {
+    const sourceId = successResult?.id
+    if (!sourceId) return
+    setIsDismissing(true)
+    try {
+      const res = await fetch(`${API_BASE}/sources/${sourceId}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error(`Delete failed: ${res.status}`)
+      queryClient.invalidateQueries({ queryKey: ['sources'] })
+      onClose()
+    } catch (err) {
+      setError(err.message || 'Failed to dismiss source')
+      setIsDismissing(false)
+    }
   }
 
   const toggleFile = (path) => {
@@ -228,6 +371,12 @@ function ClipUrlTab({ onClose, onSuccess }) {
   }
 
   const deselectAll = () => setSelectedFiles(new Set())
+
+  const toggleAnalysis = (type) => {
+    setSelectedAnalyses(prev =>
+      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+    )
+  }
 
   // Priority badge colors
   const priorityStyles = {
@@ -260,6 +409,155 @@ function ClipUrlTab({ onClose, onSuccess }) {
             <span className={`font-medium ${typeConfig.color}`}>{typeConfig.label}</span>
             <p className="text-xs text-secondary mt-0.5">{typeConfig.description}</p>
           </div>
+        </div>
+      )}
+
+      {/* Video analysis picker */}
+      {detectedType === 'video' && !isAnalyzing && !analysisDone && (
+        <div className="space-y-3">
+          {/* Analysis type checkboxes */}
+          <div>
+            <label className="label text-muted block mb-1.5">Analyses</label>
+            <div className="space-y-1">
+              {(analysisTypes || []).map(at => (
+                <label
+                  key={at.type}
+                  className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-raised cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedAnalyses.includes(at.type)}
+                    onChange={() => toggleAnalysis(at.type)}
+                    className="accent-[#d4a574]"
+                  />
+                  <div>
+                    <span className="text-sm text-primary">{at.display_name}</span>
+                    <p className="text-xs text-muted">{at.description}</p>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Model dropdown */}
+          {selectedAnalyses.length > 0 && chatModels?.length > 0 && (
+            <div>
+              <label className="label text-muted block mb-1.5">Model</label>
+              <select
+                value={analysisModel}
+                onChange={(e) => setAnalysisModel(e.target.value)}
+                className="w-full bg-base border border-subtle rounded-lg px-4 py-2.5 text-primary focus:border-camel focus:outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)]"
+              >
+                {chatModels.map(m => (
+                  <option key={m.id} value={m.id}>
+                    {m.name} — ${m.pricing?.input ?? '?'}/M in, ${m.pricing?.output ?? '?'}/M out
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Cost note */}
+          {selectedAnalyses.length > 0 && (
+            <p className="text-xs text-muted">
+              Cost calculated after transcript is fetched. Opus 4.6 typically ~$0.05-0.15 per analysis.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Analysis progress (SSE streaming) */}
+      {isAnalyzing && analysisProgress && (
+        <div className="space-y-3">
+          <div className="bg-raised rounded-lg p-3">
+            <p className="text-sm text-primary mb-1 font-medium">
+              Video clipped — running analyses...
+            </p>
+            <div className="flex items-center gap-2">
+              <svg className="w-4 h-4 animate-spin text-camel flex-shrink-0" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span className="text-sm text-secondary">{analysisProgress.message}</span>
+            </div>
+            {analysisProgress.total > 0 && (
+              <div className="mt-2 h-1.5 bg-base rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-camel rounded-full transition-all duration-300"
+                  style={{ width: `${((analysisProgress.current || 0) / analysisProgress.total) * 100}%` }}
+                />
+              </div>
+            )}
+            {analysisProgress.cost_usd > 0 && (
+              <p className="text-xs text-muted mt-1.5">
+                Cost so far: ${analysisProgress.cost_usd.toFixed(4)}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Analysis complete — triage mode: show Key Claims popup */}
+      {analysisDone && triageMode && triageContent && (
+        <div className="space-y-4">
+          <div className="bg-surface border border-subtle rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <svg className="w-4 h-4 text-camel" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+              </svg>
+              <h3 className="text-primary font-display text-lg">Key Claims</h3>
+              {analysisProgress?.total_cost_usd > 0 && (
+                <span className="text-xs text-muted ml-auto">${analysisProgress.total_cost_usd.toFixed(4)}</span>
+              )}
+            </div>
+            <div className="max-h-[50vh] overflow-y-auto pr-1">
+              <MarkdownContent content={triageContent} inheritFontSize className="text-secondary" />
+            </div>
+          </div>
+          <p className="text-xs text-muted text-center">Worth a deeper read?</p>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={handleTriageKeep}
+              className="flex-1 py-2.5 px-4 bg-gradient-to-r from-camel to-terra text-base font-medium rounded-lg hover:shadow-lg hover:shadow-camel/30 transition-all hover:-translate-y-0.5"
+            >
+              Keep
+            </button>
+            <button
+              type="button"
+              onClick={handleTriageDismiss}
+              disabled={isDismissing}
+              className="flex-1 py-2.5 px-4 bg-raised border border-subtle text-secondary font-medium rounded-lg hover:bg-red-900/20 hover:border-red-800 hover:text-red-400 transition-all disabled:opacity-50"
+            >
+              {isDismissing ? 'Removing...' : 'Dismiss'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Analysis complete — direct mode: done */}
+      {analysisDone && !triageMode && (
+        <div className="bg-surface border border-subtle rounded-lg p-4 space-y-3">
+          <div className="flex items-start gap-2">
+            <svg className="w-5 h-5 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            <div>
+              <p className="text-primary text-sm font-medium">Video clipped and analyzed</p>
+              {analysisProgress?.total_cost_usd > 0 && (
+                <p className="text-muted text-xs mt-0.5">
+                  Total cost: ${analysisProgress.total_cost_usd.toFixed(4)}
+                </p>
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full py-2 px-4 bg-gradient-to-r from-camel to-terra text-base font-medium rounded-lg hover:shadow-lg hover:shadow-camel/30 transition-all hover:-translate-y-0.5"
+          >
+            Done
+          </button>
         </div>
       )}
 
@@ -477,26 +775,51 @@ function ClipUrlTab({ onClose, onSuccess }) {
         </div>
       )}
 
-      <div className="flex gap-3 pt-2">
-        <button
-          type="submit"
-          disabled={isLoading || !detectedType || (triageResult && selectedFiles.size === 0)}
-          className="flex-1 py-2.5 px-4 bg-gradient-to-r from-camel to-terra text-base font-medium rounded-lg hover:shadow-lg hover:shadow-camel/30 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:shadow-none"
-        >
-          {isLoading ? (triageRepo.isPending ? 'Analyzing...' : clipRepo.isPending ? 'Importing...' : 'Clipping...') :
-           detectedType === 'repo' && !triageResult ? 'Analyze Repository' :
-           triageResult ? `Import ${selectedFiles.size} File${selectedFiles.size !== 1 ? 's' : ''}` :
-           'Clip'}
-        </button>
-        <button
-          type="button"
-          onClick={onClose}
-          disabled={isLoading}
-          className="px-4 py-2.5 text-muted hover:text-secondary rounded-lg transition-colors"
-        >
-          Cancel
-        </button>
-      </div>
+      {/* Action buttons — hidden during/after analysis */}
+      {!isAnalyzing && !analysisDone && (
+        <div className="flex gap-3 pt-2">
+          {/* Video: two action buttons */}
+          {detectedType === 'video' ? (
+            <>
+              <button
+                type="button"
+                onClick={() => { setTriageMode(false); handleSubmitWithMode(false) }}
+                disabled={isLoading || !detectedType}
+                className="flex-1 py-2.5 px-4 bg-gradient-to-r from-camel to-terra text-base font-medium rounded-lg hover:shadow-lg hover:shadow-camel/30 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:shadow-none"
+              >
+                {isLoading ? 'Clipping...' : selectedAnalyses.length > 0 ? 'Clip & Read' : 'Clip'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setTriageMode(true); handleSubmitWithMode(true) }}
+                disabled={isLoading || !detectedType}
+                className="flex-1 py-2.5 px-4 bg-raised border border-subtle text-secondary font-medium rounded-lg hover:bg-elevated hover:text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isLoading ? 'Clipping...' : 'Clip & Triage'}
+              </button>
+            </>
+          ) : (
+            <button
+              type="submit"
+              disabled={isLoading || !detectedType || (triageResult && selectedFiles.size === 0)}
+              className="flex-1 py-2.5 px-4 bg-gradient-to-r from-camel to-terra text-base font-medium rounded-lg hover:shadow-lg hover:shadow-camel/30 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:shadow-none"
+            >
+              {isLoading ? (triageRepo.isPending ? 'Analyzing...' : clipRepo.isPending ? 'Importing...' : 'Clipping...') :
+               detectedType === 'repo' && !triageResult ? 'Analyze Repository' :
+               triageResult ? `Import ${selectedFiles.size} File${selectedFiles.size !== 1 ? 's' : ''}` :
+               'Clip'}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isLoading}
+            className="px-4 py-2.5 text-muted hover:text-secondary rounded-lg transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
     </form>
   )
 }

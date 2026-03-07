@@ -1296,6 +1296,26 @@ async def _create_schema():
         await _db.commit()
         print("Migration complete: Added body and completed columns to gluons")
 
+    # Source analyses table - LLM-generated analyses attached to sources
+    await _db.execute("""
+        CREATE TABLE IF NOT EXISTS source_analyses (
+            id TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+            analysis_type TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            content TEXT NOT NULL,
+            model TEXT,
+            cost_usd REAL,
+            tokens_input INTEGER,
+            tokens_output INTEGER,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    await _db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_source_analyses_source
+        ON source_analyses(source_id)
+    """)
+
     await _db.commit()
     print("Database schema created/verified")
 

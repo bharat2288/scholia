@@ -199,6 +199,52 @@ export function useClipVideo() {
   })
 }
 
+// ============================================================
+// Source Analysis (Video Analysis Pipeline)
+// ============================================================
+
+/**
+ * Fetch available analysis types
+ */
+export function useAnalysisTypes() {
+  return useQuery({
+    queryKey: ['analysis-types'],
+    queryFn: () => apiFetch('/sources/analysis-types'),
+    staleTime: Infinity,  // Static data, never refetch
+  })
+}
+
+/**
+ * Estimate analysis cost for a given word count and model
+ * @param {string} transcriptContent - Transcript text (for word count estimation)
+ * @param {string[]} analysisTypes - e.g., ["summary", "key_claims"]
+ * @param {string} modelId - e.g., "claude-opus"
+ */
+export function useEstimateAnalysisCost() {
+  return useMutation({
+    mutationFn: ({ transcriptContent, analysisTypes, modelId }) =>
+      apiFetch('/sources/estimate-analysis-cost', {
+        method: 'POST',
+        body: JSON.stringify({
+          transcript_content: transcriptContent,
+          analysis_types: analysisTypes,
+          model_id: modelId,
+        }),
+      }),
+  })
+}
+
+/**
+ * Fetch analyses for a source
+ */
+export function useSourceAnalyses(sourceId) {
+  return useQuery({
+    queryKey: ['sources', sourceId, 'analyses'],
+    queryFn: () => apiFetch(`/sources/${sourceId}/analyses`),
+    enabled: !!sourceId,
+  })
+}
+
 /**
  * Stage 1: Triage a GitHub repository — fetch metadata, LLM recommends files.
  * No cache invalidation (doesn't create a source).

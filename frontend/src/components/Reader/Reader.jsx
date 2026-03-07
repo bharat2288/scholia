@@ -20,7 +20,6 @@ import MetadataEditModal from '../common/MetadataEditModal'
 import SimpleChatTab from './SimpleChatTab'
 import { API_BASE } from '../../config'
 import AutocompleteTextarea from '../common/AutocompleteTextarea'
-
 // Global reference to YouTube player for timestamp seeking
 let youtubePlayerRef = null
 
@@ -716,6 +715,7 @@ export default function Reader() {
         figures={figures}
         highlights={highlights}
         sourceId={id}
+        analyses={data?.analyses || []}
       />
     </>
   )
@@ -742,7 +742,8 @@ export default function Reader() {
     onSectionClick: (sectionId) => {
       setCurrentSection(sectionId)
       if (layout === 'mobile') setTocDrawerOpen(false)
-    }
+    },
+    analyses: data?.analyses || [],
   }
 
   // =============================================
@@ -2110,7 +2111,7 @@ function InfoPanel({ documentData, sourceId, copyAllText, copiedAll, onEditMetad
 /**
  * Table of Contents Pane
  */
-function TocPane({ sections, currentSectionId, onSectionClick }) {
+function TocPane({ sections, currentSectionId, onSectionClick, analyses }) {
   const activeRef = useRef(null)
 
   // Auto-scroll ToC to keep active section visible
@@ -2124,7 +2125,32 @@ function TocPane({ sections, currentSectionId, onSectionClick }) {
     <aside className="h-full w-full bg-surface border-r border-subtle overflow-auto">
       <div className="p-4">
         <p className="label text-camel mb-4">Contents</p>
-        {sections.length === 0 ? (
+
+        {/* Analysis entries — above transcript sections */}
+        {analyses?.length > 0 && (
+          <>
+            <nav className="space-y-1 mb-3">
+              {analyses.map((a) => (
+                <button
+                  key={a.id}
+                  onClick={() => {
+                    const el = document.getElementById(`analysis-${a.id}`)
+                    el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-md text-sm transition-colors text-secondary hover:text-primary hover:bg-raised/50 flex items-center gap-2"
+                >
+                  <svg className="w-3.5 h-3.5 text-camel flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                  </svg>
+                  {a.display_name}
+                </button>
+              ))}
+            </nav>
+            <div className="border-b border-subtle mb-3" />
+          </>
+        )}
+
+        {sections.length === 0 && !analyses?.length ? (
           <p className="text-muted text-sm">No sections found</p>
         ) : (
           <nav className="space-y-1">
@@ -2177,11 +2203,16 @@ function YouTubePlayer({ videoId, title }) {
   const [isReady, setIsReady] = useState(false)
   const [isMinimized, setIsMinimized] = useState(false)
   const [isSticky, setIsSticky] = useState(false)
+  // Sticky player width as percentage of container (user-resizable via drag handle)
+  const [stickyWidthPct, setStickyWidthPct] = useState(
+    () => parseInt(localStorage.getItem('scholia-player-width') || '55')
+  )
+  const [isResizing, setIsResizing] = useState(false)
+  const widthRef = useRef(stickyWidthPct)
 
   useEffect(() => {
     if (!videoId) return
 
-    // Load YouTube IFrame API if not already loaded
     if (!window.YT) {
       const tag = document.createElement('script')
       tag.src = 'https://www.youtube.com/iframe_api'
@@ -2189,169 +2220,205 @@ function YouTubePlayer({ videoId, title }) {
       firstScriptTag.parentNode.insertBefore(tag, firstScriptTag)
     }
 
-    // Initialize player when API is ready
     const initPlayer = () => {
       if (!containerRef.current) return
-
       playerRef.current = new window.YT.Player(containerRef.current, {
         videoId: videoId,
         width: '100%',
         height: '100%',
-        playerVars: {
-          autoplay: 0,
-          modestbranding: 1,
-          rel: 0,
-          origin: window.location.origin,
-        },
+        playerVars: { autoplay: 0, modestbranding: 1, rel: 0, origin: window.location.origin },
         events: {
           onReady: () => {
             setIsReady(true)
-            // Store global reference for timestamp seeking
             youtubePlayerRef = playerRef.current
           },
         },
       })
     }
 
-    // Check if API is already loaded
-    if (window.YT && window.YT.Player) {
-      initPlayer()
-    } else {
-      // Wait for API to load
-      window.onYouTubeIframeAPIReady = initPlayer
-    }
+    if (window.YT && window.YT.Player) initPlayer()
+    else window.onYouTubeIframeAPIReady = initPlayer
 
     return () => {
       youtubePlayerRef = null
-      if (playerRef.current?.destroy) {
-        playerRef.current.destroy()
-      }
+      if (playerRef.current?.destroy) playerRef.current.destroy()
     }
   }, [videoId])
 
-  // Seek to specific time (exposed for timestamp clicks)
   const seekTo = useCallback((seconds) => {
     if (playerRef.current?.seekTo) {
       playerRef.current.seekTo(seconds, true)
       playerRef.current.playVideo()
-      // Expand if minimized
       if (isMinimized) setIsMinimized(false)
     }
   }, [isMinimized])
 
-  // Update global ref with seekTo function
   useEffect(() => {
     if (isReady && playerRef.current) {
-      youtubePlayerRef = {
-        seekTo: seekTo,
-        player: playerRef.current
-      }
+      youtubePlayerRef = { seekTo, player: playerRef.current }
+      window.__scholiaYouTubePlayer = youtubePlayerRef
     }
+    return () => { window.__scholiaYouTubePlayer = null }
   }, [isReady, seekTo])
 
-  // Handle sticky behavior on scroll
+  // Detect sticky state via scroll listener on <main>
+  // Used only for visual changes (shadow, smaller width) — CSS sticky handles positioning
   useEffect(() => {
     if (!wrapperRef.current || isMinimized) return
+
+    const scrollContainer = wrapperRef.current.closest('main')
+    if (!scrollContainer) return
 
     const handleScroll = () => {
       const wrapper = wrapperRef.current
       if (!wrapper) return
-
       const rect = wrapper.getBoundingClientRect()
-      // Go sticky when the player would scroll out of view (with some offset for the nav bar)
-      const shouldStick = rect.top < 60
-      setIsSticky(shouldStick)
+      // Sticky kicks in when wrapper's top reaches the sticky offset (52px)
+      setIsSticky(rect.top <= 56)
     }
 
-    // Find the scrollable container (main element)
-    const scrollContainer = wrapperRef.current?.closest('main')
-    if (scrollContainer) {
-      scrollContainer.addEventListener('scroll', handleScroll)
-      return () => scrollContainer.removeEventListener('scroll', handleScroll)
-    }
+    scrollContainer.addEventListener('scroll', handleScroll)
+    return () => scrollContainer.removeEventListener('scroll', handleScroll)
   }, [isMinimized])
+
+  // Resize drag — adjusts sticky width percentage
+  // Right-aligned player: width = distance from cursor to right edge of wrapper
+  // Dragging left = wider, dragging right = narrower
+  useEffect(() => {
+    if (!isResizing) return
+
+    // Lock cursor + disable text selection for the whole document during drag
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const handleMouseMove = (e) => {
+      const wrapper = wrapperRef.current
+      if (!wrapper) return
+      const rect = wrapper.getBoundingClientRect()
+      // Centered player: width = 2 × distance from cursor to center
+      const centerX = rect.left + rect.width / 2
+      const pct = Math.max(30, Math.min(98, (Math.abs(e.clientX - centerX) * 2 / rect.width) * 100))
+      const rounded = Math.round(pct)
+      widthRef.current = rounded
+      setStickyWidthPct(rounded)
+    }
+
+    const handleMouseUp = () => {
+      setIsResizing(false)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      localStorage.setItem('scholia-player-width', String(widthRef.current))
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [isResizing])
 
   if (!videoId) return null
 
   return (
-    <div ref={wrapperRef} className="mb-6" style={{ minHeight: isSticky && !isMinimized ? '200px' : 'auto' }}>
+    <div
+      ref={wrapperRef}
+      className="mb-6 sticky top-[52px] z-20 relative"
+    >
       <div
         id="youtube-player-container"
         className={`
-          rounded-lg overflow-hidden border border-subtle bg-surface transition-all duration-300
+          rounded-lg overflow-hidden border border-subtle bg-surface
+          ${isResizing ? '' : 'transition-all duration-300 ease-out'}
           ${isMinimized ? 'h-12' : ''}
-          ${isSticky && !isMinimized ? 'fixed top-14 right-[336px] left-[272px] z-20 shadow-xl max-w-2xl mx-auto' : ''}
+          ${isSticky && !isMinimized ? 'mx-auto shadow-xl border-camel/20' : ''}
         `}
-        style={isSticky && !isMinimized ? { maxWidth: 'calc(100% - 272px - 336px - 64px)' } : {}}
+        style={isSticky && !isMinimized ? { width: `${stickyWidthPct}%` } : {}}
       >
-      {/* Header bar */}
-      <div className="flex items-center justify-between px-3 py-2 bg-raised/50 border-b border-subtle">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-[#ff0000] text-sm">▶</span>
-          <span className="text-xs text-secondary truncate">{title || 'Video'}</span>
+        {/* Header bar */}
+        <div className="flex items-center justify-between px-3 py-2 bg-raised/50 border-b border-subtle">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-[#ff0000] text-sm">▶</span>
+            <span className="text-xs text-secondary truncate">{title || 'Video'}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsMinimized(!isMinimized)}
+              className="text-muted hover:text-secondary transition-colors p-1"
+              title={isMinimized ? 'Expand video' : 'Minimize video'}
+            >
+              {isMinimized ? (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              )}
+            </button>
+            <a
+              href={`https://youtube.com/watch?v=${videoId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-muted hover:text-secondary transition-colors p-1"
+              title="Open on YouTube"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+            </a>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setIsMinimized(!isMinimized)}
-            className="text-muted hover:text-secondary transition-colors p-1"
-            title={isMinimized ? 'Expand video' : 'Minimize video'}
-          >
-            {isMinimized ? (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-              </svg>
-            ) : (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
+
+        {/* Video container — 16:9 aspect ratio */}
+        {!isMinimized && (
+          <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
+            <div ref={containerRef} className="absolute inset-0" />
+            {/* Transparent shield: blocks iframe from stealing mouse events during resize drag */}
+            {isResizing && <div className="absolute inset-0 z-10" />}
+            {!isReady && (
+              <div className="absolute inset-0 flex items-center justify-center bg-base">
+                <span className="text-muted text-sm">Loading video...</span>
+              </div>
             )}
-          </button>
-          <a
-            href={`https://youtube.com/watch?v=${videoId}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-muted hover:text-secondary transition-colors p-1"
-            title="Open on YouTube"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-            </svg>
-          </a>
-        </div>
+          </div>
+        )}
+
       </div>
 
-      {/* Video container */}
-      {!isMinimized && (
-        <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
+      {/* Bilateral resize handles — centered player expands/contracts symmetrically */}
+      {isSticky && !isMinimized && (
+        <>
           <div
-            ref={containerRef}
-            className="absolute inset-0"
-          />
-          {!isReady && (
-            <div className="absolute inset-0 flex items-center justify-center bg-base">
-              <span className="text-muted text-sm">Loading video...</span>
-            </div>
-          )}
-        </div>
+            onMouseDown={(e) => { e.preventDefault(); setIsResizing(true) }}
+            className="absolute top-0 bottom-0 w-3 -ml-1.5 cursor-col-resize z-30 group flex items-center"
+            style={{ left: `${(100 - stickyWidthPct) / 2}%` }}
+            title="Drag to resize"
+          >
+            <div className="w-1 h-10 rounded-full bg-muted/20 group-hover:bg-camel/50 transition-colors" />
+          </div>
+          <div
+            onMouseDown={(e) => { e.preventDefault(); setIsResizing(true) }}
+            className="absolute top-0 bottom-0 w-3 -ml-1.5 cursor-col-resize z-30 group flex items-center"
+            style={{ left: `${(100 + stickyWidthPct) / 2}%` }}
+            title="Drag to resize"
+          >
+            <div className="w-1 h-10 rounded-full bg-muted/20 group-hover:bg-camel/50 transition-colors" />
+          </div>
+        </>
       )}
-      </div>
     </div>
   )
 }
 
 /**
- * Seek YouTube video to specified time and scroll to player (if not sticky)
- * Called by timestamp badges
+ * Seek YouTube video to specified time.
+ * Called by timestamp badges in both transcript and analysis content.
  */
 function seekYouTubeVideo(seconds) {
-  const playerElement = document.getElementById('youtube-player-container')
-
-  // Only scroll if not already sticky (fixed position means it's visible)
-  if (playerElement && !playerElement.classList.contains('fixed')) {
-    playerElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
-
-  // Then seek the video
   if (youtubePlayerRef?.seekTo) {
     youtubePlayerRef.seekTo(seconds)
   } else if (youtubePlayerRef?.player?.seekTo) {
@@ -2361,6 +2428,74 @@ function seekYouTubeVideo(seconds) {
 }
 
 /**
+ * Analysis Section
+ * Renders a single analysis block (Summary, Key Claims) through the segment pipeline.
+ * Same typography and features as transcript content: section headers with copy buttons,
+ * proper lists, blockquotes, code blocks, and [TIMESTAMP] clickable backlinks.
+ */
+function AnalysisSection({ analysis }) {
+  const [copiedSection, setCopiedSection] = useState(null)
+
+  const segments = useMemo(
+    () => parseAnalysisIntoSegments(analysis.content),
+    [analysis.content]
+  )
+
+  const emptyHighlights = useMemo(() => [], [])
+  const emptyHighlightMap = useMemo(() => new Map(), [])
+
+  // Copy all text from a section header through to the next same-level header
+  const copySectionText = useCallback((sectionIndex) => {
+    const startSegment = segments[sectionIndex]
+    if (!startSegment || startSegment.type !== 'section') return
+
+    const sectionLevel = startSegment.level
+    let text = startSegment.title + '\n\n'
+
+    for (let i = sectionIndex + 1; i < segments.length; i++) {
+      const seg = segments[i]
+      if (seg.type === 'section' && seg.level <= sectionLevel) break
+      if (seg.text) text += seg.text + '\n\n'
+      else if (seg.type === 'section') text += seg.title + '\n\n'
+    }
+
+    navigator.clipboard.writeText(text.trim())
+    setCopiedSection(sectionIndex)
+    setTimeout(() => setCopiedSection(null), 1500)
+  }, [segments])
+
+  return (
+    <div
+      id={`analysis-${analysis.id}`}
+      className="mb-8 bg-surface/50 border border-subtle rounded-lg p-6"
+      style={{ fontFamily: "'Plus Jakarta Sans', -apple-system, sans-serif" }}
+    >
+      <div className="flex items-center gap-2 mb-4">
+        <svg className="w-4 h-4 text-camel" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+        </svg>
+        <h2 className="text-lg font-display text-primary m-0">{analysis.display_name}</h2>
+        {analysis.model && (
+          <span className="text-xs text-muted ml-auto">{analysis.model}</span>
+        )}
+      </div>
+      {segments.map((segment, i) => (
+        <Segment
+          key={i}
+          segment={segment}
+          segmentIndex={i}
+          highlights={emptyHighlights}
+          highlightMap={emptyHighlightMap}
+          onCopySection={copySectionText}
+          isCopied={copiedSection === i}
+        />
+      ))}
+    </div>
+  )
+}
+
+
+/**
  * Reading Content
  * Renders document text with offset tracking for reliable highlight selection
  *
@@ -2368,7 +2503,7 @@ function seekYouTubeVideo(seconds) {
  * in the original document. This allows us to map DOM selections back to
  * character offsets WITHOUT searching/matching text (which caused crashes).
  */
-function ReadingContent({ content, sections, figures, highlights, sourceId }) {
+function ReadingContent({ content, sections, figures, highlights, sourceId, analyses }) {
   const [copiedSection, setCopiedSection] = useState(null)
   const { fontSize } = useReaderStore()
 
@@ -2425,6 +2560,16 @@ function ReadingContent({ content, sections, figures, highlights, sourceId }) {
       className="prose prose-invert max-w-none"
       style={{ fontSize: `${fontSize}px`, lineHeight: 1.7 }}
     >
+      {/* Analysis blocks rendered above transcript — full segment pipeline */}
+      {analyses?.length > 0 && (
+        <div className="mb-12">
+          {analyses.map((a) => (
+            <AnalysisSection key={a.id} analysis={a} />
+          ))}
+          <div className="border-b border-subtle" />
+        </div>
+      )}
+
       {segments.map((segment, i) => (
         <Segment
           key={i}
@@ -2574,6 +2719,170 @@ function parseContentIntoSegments(content, sections, figures, sourceId) {
 
     segments.push(segment)
     offset += para.length + 2 // +2 for \n\n
+  }
+
+  return segments
+}
+
+
+/**
+ * Parse standard markdown (from LLM analysis output) into segments.
+ * Handles headers, paragraphs, lists, blockquotes, code blocks, and horizontal rules.
+ * Unlike parseContentIntoSegments (which expects [SECTION]/[TIMESTAMP] markers),
+ * this handles standard markdown syntax.
+ */
+function parseAnalysisIntoSegments(content) {
+  if (!content) return []
+
+  const segments = []
+  const lines = content.split('\n')
+  let i = 0
+  let offset = 0
+
+  while (i < lines.length) {
+    const line = lines[i]
+
+    // Skip empty lines
+    if (!line.trim()) {
+      offset += line.length + 1
+      i++
+      continue
+    }
+
+    // Code block (``` ... ```)
+    if (line.startsWith('```')) {
+      const language = line.slice(3).trim()
+      const codeLines = []
+      const blockStart = offset
+      offset += line.length + 1
+      i++
+      while (i < lines.length && !lines[i].startsWith('```')) {
+        codeLines.push(lines[i])
+        offset += lines[i].length + 1
+        i++
+      }
+      if (i < lines.length) {
+        offset += lines[i].length + 1
+        i++ // skip closing ```
+      }
+      segments.push({
+        type: 'code',
+        language,
+        text: codeLines.join('\n'),
+        offset: blockStart,
+        length: offset - blockStart,
+      })
+      continue
+    }
+
+    // Headers (# to ######)
+    const headerMatch = line.match(/^(#{1,6})\s+(.+)/)
+    if (headerMatch) {
+      segments.push({
+        type: 'section',
+        level: headerMatch[1].length,
+        title: headerMatch[2].trim(),
+        offset,
+        length: line.length,
+      })
+      offset += line.length + 1
+      i++
+      continue
+    }
+
+    // Horizontal rule (---, ***, ___)
+    if (line.trim().match(/^[-*_]{3,}$/)) {
+      segments.push({ type: 'hr', offset, length: line.length })
+      offset += line.length + 1
+      i++
+      continue
+    }
+
+    // Blockquote (collect consecutive > lines)
+    if (line.startsWith('>')) {
+      const quoteLines = []
+      const blockStart = offset
+      while (i < lines.length && lines[i].startsWith('>')) {
+        quoteLines.push(lines[i])
+        offset += lines[i].length + 1
+        i++
+      }
+      const originalText = quoteLines.join('\n')
+      segments.push({
+        type: 'blockquote',
+        originalText,
+        text: quoteLines.map(l => l.replace(/^>\s?/, '')).join('\n'),
+        offset: blockStart,
+        length: offset - blockStart,
+      })
+      continue
+    }
+
+    // Unordered list (- or * followed by space)
+    if (line.match(/^[-*]\s/)) {
+      const listLines = []
+      const blockStart = offset
+      while (i < lines.length && (lines[i].match(/^[-*]\s/) || lines[i].match(/^\s{2,}\S/))) {
+        listLines.push(lines[i])
+        offset += lines[i].length + 1
+        i++
+      }
+      segments.push({
+        type: 'list',
+        ordered: false,
+        items: listLines.map(l => l.replace(/^[-*]\s+/, '').replace(/^\s{2,}/, '')),
+        text: listLines.join('\n'),
+        offset: blockStart,
+        length: offset - blockStart,
+      })
+      continue
+    }
+
+    // Ordered list (1. 2. etc.)
+    if (line.match(/^\d+\.\s/)) {
+      const listLines = []
+      const blockStart = offset
+      while (i < lines.length && (lines[i].match(/^\d+\.\s/) || lines[i].match(/^\s{2,}\S/))) {
+        listLines.push(lines[i])
+        offset += lines[i].length + 1
+        i++
+      }
+      segments.push({
+        type: 'list',
+        ordered: true,
+        items: listLines.map(l => l.replace(/^\d+\.\s+/, '').replace(/^\s{2,}/, '')),
+        text: listLines.join('\n'),
+        offset: blockStart,
+        length: offset - blockStart,
+      })
+      continue
+    }
+
+    // Regular paragraph (collect lines until empty line or special block)
+    const paraLines = []
+    const blockStart = offset
+    while (
+      i < lines.length &&
+      lines[i].trim() &&
+      !lines[i].match(/^#{1,6}\s/) &&
+      !lines[i].trim().match(/^[-*_]{3,}$/) &&
+      !lines[i].startsWith('>') &&
+      !lines[i].startsWith('```') &&
+      !(lines[i].match(/^[-*]\s/) && !paraLines.length) &&
+      !(lines[i].match(/^\d+\.\s/) && !paraLines.length)
+    ) {
+      paraLines.push(lines[i])
+      offset += lines[i].length + 1
+      i++
+    }
+    if (paraLines.length > 0) {
+      segments.push({
+        type: 'paragraph',
+        text: paraLines.join('\n'),
+        offset: blockStart,
+        length: offset - blockStart,
+      })
+    }
   }
 
   return segments
@@ -2787,11 +3096,35 @@ function Segment({ segment, segmentIndex, highlights, highlightMap, onCopySectio
       )
     }
 
+    case 'list':
+      return (
+        <div className="my-4 space-y-1.5 ml-1">
+          {(segment.items || []).map((item, idx) => (
+            <div key={idx} className="flex gap-3">
+              <span className="text-muted flex-shrink-0 mt-0.5 w-4 text-right">
+                {segment.ordered ? `${idx + 1}.` : '•'}
+              </span>
+              <span className="text-secondary leading-relaxed">
+                <FormattedSpan text={item} baseOffset={segment.offset} />
+              </span>
+            </div>
+          ))}
+        </div>
+      )
+
+    case 'hr':
+      return (
+        <div className="my-8 flex items-center justify-center gap-4">
+          <div className="flex-1 h-px bg-elevated max-w-full" />
+        </div>
+      )
+
     default:
       // Regular paragraph - render with offset tracking and highlights
+      // whitespace-pre-line preserves \n in analysis content (bold labels on separate lines)
       return (
         <div className="group/edit relative mb-4">
-          <p className="text-secondary leading-relaxed">
+          <p className="text-secondary leading-relaxed whitespace-pre-line">
             <OffsetText
               text={segment.text}
               baseOffset={segment.offset}
@@ -2901,6 +3234,19 @@ function OffsetText({ text, baseOffset, highlights }) {
 function FormattedSpan({ text, baseOffset }) {
   if (!text) return null
 
+  // Multi-line text: process each line separately so regex patterns (which use . that
+  // doesn't match \n) can find **bold**, [TIMESTAMP], etc. on every line
+  if (text.includes('\n')) {
+    const lines = text.split('\n')
+    let lineOffset = 0
+    return <>{lines.map((line, i) => {
+      const offset = baseOffset !== undefined ? baseOffset + lineOffset : undefined
+      lineOffset += line.length + 1 // +1 for the \n
+      if (i === 0) return <FormattedSpan key={i} text={line} baseOffset={offset} />
+      return <span key={i}>{'\n'}<FormattedSpan text={line} baseOffset={offset} /></span>
+    })}</>
+  }
+
   // Quick check if any formatting needed
   if (!text.includes('**') && !text.includes('*') && !text.includes('<') && !text.includes('$') && !text.includes('`') && !text.includes('[')) {
     return text
@@ -3001,6 +3347,36 @@ function FormattedSpan({ text, baseOffset }) {
       rawOffset += codeMatch[2].length
       rawOffset += 1 // skip closing `
       remaining = remaining.slice(codeMatch[0].length)
+      continue
+    }
+
+    // [TIMESTAMP HH:MM:SS] — clickable button to seek YouTube player
+    const tsMatch = remaining.match(/^(.*?)\[TIMESTAMP\s+([^\]]+)\]/)
+    if (tsMatch) {
+      if (tsMatch[1]) {
+        parts.push(<span key={key++} {...(track && { 'data-offset': baseOffset + rawOffset })}>{tsMatch[1]}</span>)
+        rawOffset += tsMatch[1].length
+      }
+      const tsValue = tsMatch[2].trim()
+      const tsParts = tsValue.split(':').map(Number)
+      let totalSeconds = 0
+      if (tsParts.length === 3) totalSeconds = tsParts[0] * 3600 + tsParts[1] * 60 + tsParts[2]
+      else if (tsParts.length === 2) totalSeconds = tsParts[0] * 60 + tsParts[1]
+
+      const fullTokenLen = tsMatch[0].length - tsMatch[1].length
+      parts.push(
+        <button
+          key={key++}
+          onClick={(e) => { e.stopPropagation(); seekYouTubeVideo(totalSeconds) }}
+          className="text-camel bg-camel/10 px-1.5 py-0.5 rounded text-xs font-mono hover:bg-camel/20 transition-colors cursor-pointer"
+          title={`Jump to ${tsValue}`}
+          {...(track && { 'data-offset': baseOffset + rawOffset })}
+        >
+          {tsValue}
+        </button>
+      )
+      rawOffset += fullTokenLen
+      remaining = remaining.slice(tsMatch[0].length)
       continue
     }
 
