@@ -346,7 +346,9 @@ function ClipUrlTab({ onClose, onSuccess }) {
           queryClient.invalidateQueries({ queryKey: ['sources', sourceId, 'analyses'] })
           queryClient.invalidateQueries({ queryKey: ['reading', sourceId] })
         }
-      } catch { /* SSE parse errors are non-fatal */ }
+      } catch (err) {
+        if (!(err instanceof SyntaxError)) console.error('SSE handler error:', err)
+      }
     }
     bgEs.onerror = () => bgEs.close()
 

@@ -2247,7 +2247,7 @@ function YouTubePlayer({ videoId, title }) {
             setVideoPlaying(playing)
 
             if (playing) {
-              // Start 250ms polling for current time
+              // Start 100ms polling for current time
               if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
               pollIntervalRef.current = setInterval(() => {
                 if (playerRef.current?.getCurrentTime) {
@@ -2274,7 +2274,7 @@ function YouTubePlayer({ videoId, title }) {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
       if (playerRef.current?.destroy) playerRef.current.destroy()
     }
-  }, [videoId])
+  }, [videoId, setPlaybackTime, setVideoPlaying])
 
   const seekTo = useCallback((seconds) => {
     if (playerRef.current?.seekTo) {
