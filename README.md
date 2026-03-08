@@ -9,40 +9,6 @@ A local-first research knowledge system for reading, annotating, and connecting 
 
 ---
 
-## Demos
-
-### Library
-Browse, search, filter, and sort your sources — PDFs, web articles, tweets, video transcripts — in card or row view.
-
-https://github.com/user-attachments/assets/2a929a97-f6c0-4123-9274-feb1dab1cb50
-
-### Reader + Highlights
-Three-pane reading interface with Table of Contents navigation, multi-color highlighting, and annotations.
-
-https://github.com/user-attachments/assets/d237d5c9-4f59-4bb3-ac01-b52b7dc5b397
-
-### Reader + AI Chat
-Per-document AI conversations with history, analytical presets, model selection, and Council mode.
-
-https://github.com/user-attachments/assets/66ad38e5-0cf3-4643-946a-1bf4e7354b95
-
-### Knowledge Hub
-Cross-document knowledge browsing — notes, highlights, tags, people, journal, and chat history.
-
-https://github.com/user-attachments/assets/c2735cc3-e311-4534-b1a4-11adb04ecf2b
-
-### Research Sessions
-Multi-document AI research with agentic tool use, evidence traces, and source cross-referencing.
-
-https://github.com/user-attachments/assets/aff07efd-4ed3-448c-9b8d-4cac4c34c48e
-
-### Section Editor
-Three-pane editing with PDF reference, syntax-highlighted markers, and structure analysis.
-
-https://github.com/user-attachments/assets/38a8b6c1-f0de-4f34-b6f3-f4023ff44cf2
-
----
-
 ## Why I Built This
 
 I was a heavy [RemNote](https://www.remnote.com/) user during my PhD, and I owe a real debt to that tool — its model of bidirectional linking, highlights-as-objects, and intercitational note-taking shaped how I think about knowledge management. Scholia is built on that foundation.
@@ -112,6 +78,42 @@ But my workflow kept bumping against edges:
 - Optional GPU acceleration via RunPod (remote pod management)
 - Figure extraction with bounding box cropping
 - Section Editor for fixing OCR errors
+
+---
+
+## Demos
+
+> See it in action — click to play.
+
+### Library
+Browse, search, filter, and sort your sources — PDFs, web articles, tweets, video transcripts — in card or row view.
+
+https://github.com/user-attachments/assets/2a929a97-f6c0-4123-9274-feb1dab1cb50
+
+### Reader + Highlights
+Three-pane reading interface with Table of Contents navigation, multi-color highlighting, and annotations.
+
+https://github.com/user-attachments/assets/d237d5c9-4f59-4bb3-ac01-b52b7dc5b397
+
+### Reader + AI Chat
+Per-document AI conversations with history, analytical presets, model selection, and Council mode.
+
+https://github.com/user-attachments/assets/66ad38e5-0cf3-4643-946a-1bf4e7354b95
+
+### Knowledge Hub
+Cross-document knowledge browsing — notes, highlights, tags, people, journal, and chat history.
+
+https://github.com/user-attachments/assets/c2735cc3-e311-4534-b1a4-11adb04ecf2b
+
+### Research Sessions
+Multi-document AI research with agentic tool use, evidence traces, and source cross-referencing.
+
+https://github.com/user-attachments/assets/aff07efd-4ed3-448c-9b8d-4cac4c34c48e
+
+### Section Editor
+Three-pane editing with PDF reference, syntax-highlighted markers, and structure analysis.
+
+https://github.com/user-attachments/assets/38a8b6c1-f0de-4f34-b6f3-f4023ff44cf2
 
 ---
 
