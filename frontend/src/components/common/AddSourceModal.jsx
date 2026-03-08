@@ -329,10 +329,27 @@ function ClipUrlTab({ onClose, onSuccess }) {
     setError(null)
   }
 
-  // Triage: Keep — source stays, optionally run remaining analyses (Summary)
+  // Triage: Keep — source stays, auto-run Summary in background
   const handleTriageKeep = () => {
     const sourceId = successResult?.id
     if (!sourceId) return
+
+    // Fire-and-forget: run Summary analysis via background SSE
+    const sseUrl = `${API_BASE}/sources/${sourceId}/analyze/stream?types=summary&model=${analysisModel}`
+    const bgEs = new EventSource(sseUrl)
+    bgEs.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        if (data.stage === 'complete') {
+          bgEs.close()
+          // Invalidate so Reader picks up the new Summary
+          queryClient.invalidateQueries({ queryKey: ['sources', sourceId, 'analyses'] })
+          queryClient.invalidateQueries({ queryKey: ['reading', sourceId] })
+        }
+      } catch { /* SSE parse errors are non-fatal */ }
+    }
+    bgEs.onerror = () => bgEs.close()
+
     queryClient.invalidateQueries({ queryKey: ['reading', sourceId] })
     queryClient.invalidateQueries({ queryKey: ['sources', sourceId, 'analyses'] })
     queryClient.invalidateQueries({ queryKey: ['sources'] })
@@ -500,8 +517,11 @@ function ClipUrlTab({ onClose, onSuccess }) {
       {/* Analysis complete — triage mode: show Key Claims popup */}
       {analysisDone && triageMode && triageContent && (
         <div className="space-y-4">
-          <div className="bg-surface border border-subtle rounded-lg p-4">
-            <div className="flex items-center gap-2 mb-3">
+          <div
+            className="bg-surface/50 border border-subtle rounded-lg p-5"
+            style={{ fontFamily: "'Plus Jakarta Sans', -apple-system, sans-serif" }}
+          >
+            <div className="flex items-center gap-2 mb-4">
               <svg className="w-4 h-4 text-camel" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
               </svg>
@@ -511,7 +531,7 @@ function ClipUrlTab({ onClose, onSuccess }) {
               )}
             </div>
             <div className="max-h-[50vh] overflow-y-auto pr-1">
-              <MarkdownContent content={triageContent} inheritFontSize className="text-secondary" />
+              <MarkdownContent content={triageContent} inheritFontSize prose className="text-secondary" />
             </div>
           </div>
           <p className="text-xs text-muted text-center">Worth a deeper read?</p>

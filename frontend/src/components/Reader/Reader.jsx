@@ -221,6 +221,7 @@ export default function Reader() {
     setContent,
     currentSectionId,
     setCurrentSection,
+    setTranscriptCues,
     reset
   } = useReaderStore()
 
@@ -236,6 +237,11 @@ export default function Reader() {
       })
       setSections(data.sections || [])
       setContent(data.content || '')
+
+      // Store transcript cues for video sync (if media source with cues)
+      if (data.transcript_cues?.length) {
+        setTranscriptCues(data.transcript_cues)
+      }
 
       // Restore reading position if available, otherwise go to first section
       if (data.reading_position?.section_id) {
@@ -2199,7 +2205,9 @@ function CopyIcon({ className = "w-4 h-4" }) {
 function YouTubePlayer({ videoId, title }) {
   const containerRef = useRef(null)
   const playerRef = useRef(null)
+  const { autoScrollEnabled, setAutoScrollEnabled } = useReaderStore()
   const wrapperRef = useRef(null)
+  const pollIntervalRef = useRef(null)
   const [isReady, setIsReady] = useState(false)
   const [isMinimized, setIsMinimized] = useState(false)
   const [isSticky, setIsSticky] = useState(false)
@@ -2209,6 +2217,7 @@ function YouTubePlayer({ videoId, title }) {
   )
   const [isResizing, setIsResizing] = useState(false)
   const widthRef = useRef(stickyWidthPct)
+  const { setPlaybackTime, setVideoPlaying } = useReaderStore()
 
   useEffect(() => {
     if (!videoId) return
@@ -2232,6 +2241,27 @@ function YouTubePlayer({ videoId, title }) {
             setIsReady(true)
             youtubePlayerRef = playerRef.current
           },
+          onStateChange: (event) => {
+            // YT.PlayerState: 1=PLAYING, 2=PAUSED, 0=ENDED, 3=BUFFERING
+            const playing = event.data === 1
+            setVideoPlaying(playing)
+
+            if (playing) {
+              // Start 250ms polling for current time
+              if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+              pollIntervalRef.current = setInterval(() => {
+                if (playerRef.current?.getCurrentTime) {
+                  setPlaybackTime(playerRef.current.getCurrentTime())
+                }
+              }, 100)
+            } else {
+              // Stop polling when not playing
+              if (pollIntervalRef.current) {
+                clearInterval(pollIntervalRef.current)
+                pollIntervalRef.current = null
+              }
+            }
+          },
         },
       })
     }
@@ -2241,6 +2271,7 @@ function YouTubePlayer({ videoId, title }) {
 
     return () => {
       youtubePlayerRef = null
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
       if (playerRef.current?.destroy) playerRef.current.destroy()
     }
   }, [videoId])
@@ -2345,6 +2376,13 @@ function YouTubePlayer({ videoId, title }) {
           </div>
           <div className="flex items-center gap-2">
             <button
+              onClick={() => setAutoScrollEnabled(!autoScrollEnabled)}
+              className={`text-xs px-2 py-0.5 rounded transition-colors ${autoScrollEnabled ? 'bg-camel/20 text-camel' : 'bg-elevated text-muted hover:text-secondary'}`}
+              title={autoScrollEnabled ? 'Auto-scroll on — click to disable' : 'Auto-scroll off — click to enable'}
+            >
+              {autoScrollEnabled ? 'Sync' : 'Sync'}
+            </button>
+            <button
               onClick={() => setIsMinimized(!isMinimized)}
               className="text-muted hover:text-secondary transition-colors p-1"
               title={isMinimized ? 'Expand video' : 'Minimize video'}
@@ -2425,6 +2463,21 @@ function seekYouTubeVideo(seconds) {
     youtubePlayerRef.player.seekTo(seconds, true)
     youtubePlayerRef.player.playVideo()
   }
+
+  // Update playback time immediately so the active cue highlights
+  const store = useReaderStore.getState()
+  store.setPlaybackTime(seconds)
+
+  // Scroll to the matching cue after a brief delay for DOM update
+  setTimeout(() => {
+    const el = document.querySelector('[data-cue-active="true"]')
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      // Flash animation
+      el.classList.add('cue-flash')
+      setTimeout(() => el.classList.remove('cue-flash'), 1000)
+    }
+  }, 50)
 }
 
 /**
@@ -2505,7 +2558,27 @@ function AnalysisSection({ analysis }) {
  */
 function ReadingContent({ content, sections, figures, highlights, sourceId, analyses }) {
   const [copiedSection, setCopiedSection] = useState(null)
-  const { fontSize } = useReaderStore()
+  const activeCueRef = useRef(null)
+  const userScrolledRef = useRef(false)
+  const lastAutoScrollCueRef = useRef(-1)
+  const { fontSize, transcriptCues, activeCueIndex, isVideoPlaying, autoScrollEnabled } = useReaderStore()
+
+  // Active cue offset range for highlighting
+  const activeCue = activeCueIndex >= 0 && activeCueIndex < transcriptCues.length
+    ? transcriptCues[activeCueIndex]
+    : null
+
+  // Auto-scroll to active cue when video is playing
+  useEffect(() => {
+    if (!isVideoPlaying || !autoScrollEnabled || !activeCue || activeCueIndex === lastAutoScrollCueRef.current) return
+    lastAutoScrollCueRef.current = activeCueIndex
+
+    // Find the element with the active cue data attribute
+    const el = document.querySelector('[data-cue-active="true"]')
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [activeCueIndex, isVideoPlaying, autoScrollEnabled])
 
   // Pre-process content into segments with offset tracking
   const segments = useMemo(() => {
@@ -2580,6 +2653,7 @@ function ReadingContent({ content, sections, figures, highlights, sourceId, anal
           onCopySection={copySectionText}
           isCopied={copiedSection === i}
           sourceId={sourceId}
+          activeCue={activeCue}
         />
       ))}
     </div>
@@ -2892,7 +2966,7 @@ function parseAnalysisIntoSegments(content) {
 /**
  * Render a single segment
  */
-function Segment({ segment, segmentIndex, highlights, highlightMap, onCopySection, isCopied, sourceId }) {
+function Segment({ segment, segmentIndex, highlights, highlightMap, onCopySection, isCopied, sourceId, activeCue }) {
   switch (segment.type) {
     case 'title':
       return null
@@ -2951,18 +3025,32 @@ function Segment({ segment, segmentIndex, highlights, highlightMap, onCopySectio
         </div>
       )
 
-    case 'timestamp':
+    case 'timestamp': {
       // Video timestamp marker with transcript text - clickable to seek video
+      // Check if the active cue falls within this segment's text range
+      const tsBaseOffset = segment.textOffset || segment.offset
+      const tsEndOffset = tsBaseOffset + (segment.text?.length || 0)
+      const isCueActive = activeCue &&
+        activeCue.start_offset < tsEndOffset &&
+        activeCue.end_offset > tsBaseOffset
+
       return (
-        <div className="mt-6">
+        <div
+          className={`mt-6 transition-colors duration-100 ${isCueActive ? 'rounded-md bg-camel/8' : ''}`}
+          data-cue-active={isCueActive ? 'true' : undefined}
+        >
           <div className="mb-2 flex items-center gap-2 select-none">
             <button
               onClick={() => seekYouTubeVideo(segment.seconds)}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-[#ff0000]/10 text-[#ff0000]/80 hover:bg-[#ff0000]/20 hover:text-[#ff0000] transition-colors cursor-pointer"
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono transition-colors cursor-pointer ${
+                isCueActive
+                  ? 'bg-camel/20 text-camel ring-1 ring-camel/30'
+                  : 'bg-[#ff0000]/10 text-[#ff0000]/80 hover:bg-[#ff0000]/20 hover:text-[#ff0000]'
+              }`}
               title={`Jump to ${segment.time} in video`}
               data-seconds={segment.seconds}
             >
-              <span className="text-[10px]">▶</span>
+              <span className="text-[10px]">{isCueActive ? '●' : '▶'}</span>
               {segment.time}
             </button>
           </div>
@@ -2970,13 +3058,15 @@ function Segment({ segment, segmentIndex, highlights, highlightMap, onCopySectio
             <p className="text-secondary leading-relaxed mb-4">
               <OffsetText
                 text={segment.text}
-                baseOffset={segment.textOffset || segment.offset}
+                baseOffset={tsBaseOffset}
                 highlights={highlights}
+                activeCue={activeCue}
               />
             </p>
           )}
         </div>
       )
+    }
 
     case 'figure':
       // Web figures have filename, dots-ocr figures have index-based lookup
@@ -3152,7 +3242,7 @@ function Segment({ segment, segmentIndex, highlights, highlightMap, onCopySectio
  * Render text with character offset tracking
  * Each span has data-offset for selection mapping
  */
-function OffsetText({ text, baseOffset, highlights }) {
+function OffsetText({ text, baseOffset, highlights, activeCue }) {
   // Find highlights that overlap this text range
   const relevantHighlights = useMemo(() => {
     const textEnd = baseOffset + text.length
@@ -3160,8 +3250,20 @@ function OffsetText({ text, baseOffset, highlights }) {
       .sort((a, b) => a.start_offset - b.start_offset)
   }, [highlights, baseOffset, text.length])
 
-  // If no highlights, render simple text with offset
-  if (relevantHighlights.length === 0) {
+  // Compute active cue range relative to this text span
+  const cueRange = useMemo(() => {
+    if (!activeCue) return null
+    const textEnd = baseOffset + text.length
+    if (activeCue.start_offset >= textEnd || activeCue.end_offset <= baseOffset) return null
+    return {
+      start: Math.max(0, activeCue.start_offset - baseOffset),
+      end: Math.min(text.length, activeCue.end_offset - baseOffset),
+      seconds: activeCue.start_time,
+    }
+  }, [activeCue, baseOffset, text.length])
+
+  // If no highlights and no active cue, render simple text with offset
+  if (relevantHighlights.length === 0 && !cueRange) {
     return (
       <span data-offset={baseOffset}>
         <FormattedSpan text={text} baseOffset={baseOffset} />
@@ -3169,53 +3271,99 @@ function OffsetText({ text, baseOffset, highlights }) {
     )
   }
 
-  // Render text with highlight spans
-  const parts = []
-  let currentPos = 0
-
+  // Build a list of "markers" (boundaries where styling changes)
+  // Each marker: { pos, type: 'hl-start'|'hl-end'|'cue-start'|'cue-end', data }
+  const markers = []
   for (const h of relevantHighlights) {
     const hlStart = Math.max(0, h.start_offset - baseOffset)
     const hlEnd = Math.min(text.length, h.end_offset - baseOffset)
-
-    // Skip if highlight doesn't actually overlap
     if (hlStart >= text.length || hlEnd <= 0) continue
+    markers.push({ pos: hlStart, type: 'hl-start', highlight: h })
+    markers.push({ pos: hlEnd, type: 'hl-end', highlight: h })
+  }
+  if (cueRange) {
+    markers.push({ pos: cueRange.start, type: 'cue-start' })
+    markers.push({ pos: cueRange.end, type: 'cue-end' })
+  }
+  markers.sort((a, b) => a.pos - b.pos || (a.type.endsWith('start') ? -1 : 1))
 
-    // Text before highlight
-    if (hlStart > currentPos) {
-      parts.push(
-        <span key={`pre-${h.id}`} data-offset={baseOffset + currentPos}>
-          <FormattedSpan text={text.slice(currentPos, hlStart)} baseOffset={baseOffset + currentPos} />
-        </span>
-      )
+  // Walk through text, splitting at marker boundaries
+  const parts = []
+  let currentPos = 0
+  const activeHighlights = new Set()
+  let cueActive = false
+
+  // Collect unique boundary positions
+  const boundaries = [...new Set(markers.map(m => m.pos))].sort((a, b) => a - b)
+
+  for (const boundary of boundaries) {
+    // Render text from currentPos to this boundary with current styling
+    if (boundary > currentPos) {
+      parts.push(renderStyledSpan(text, baseOffset, currentPos, boundary, activeHighlights, cueActive, cueRange, parts.length))
     }
+    currentPos = boundary
 
-    // Highlighted portion
-    const color = HIGHLIGHT_COLORS[h.color] || HIGHLIGHT_COLORS.yellow
-    parts.push(
-      <mark
-        key={h.id}
-        data-offset={baseOffset + hlStart}
-        data-highlight-id={h.id}
-        className="rounded px-0.5 transition-all"
-        style={{ backgroundColor: color.bg }}
-      >
-        <FormattedSpan text={text.slice(hlStart, hlEnd)} baseOffset={baseOffset + hlStart} />
-      </mark>
-    )
-
-    currentPos = hlEnd
+    // Process all markers at this position
+    for (const m of markers) {
+      if (m.pos !== boundary) continue
+      if (m.type === 'hl-start') activeHighlights.add(m.highlight)
+      if (m.type === 'hl-end') activeHighlights.delete(m.highlight)
+      if (m.type === 'cue-start') cueActive = true
+      if (m.type === 'cue-end') cueActive = false
+    }
   }
 
-  // Remaining text after last highlight
+  // Remaining text after all markers
   if (currentPos < text.length) {
-    parts.push(
-      <span key="post" data-offset={baseOffset + currentPos}>
-        <FormattedSpan text={text.slice(currentPos)} baseOffset={baseOffset + currentPos} />
+    parts.push(renderStyledSpan(text, baseOffset, currentPos, text.length, activeHighlights, cueActive, cueRange, parts.length))
+  }
+
+  return <>{parts}</>
+}
+
+/** Render a text slice with combined highlight + cue styling */
+function renderStyledSpan(text, baseOffset, start, end, activeHighlights, cueActive, cueRange, keyIndex) {
+  const slice = text.slice(start, end)
+  const offset = baseOffset + start
+  const hl = activeHighlights.size > 0 ? [...activeHighlights][0] : null
+  const color = hl ? (HIGHLIGHT_COLORS[hl.color] || HIGHLIGHT_COLORS.yellow) : null
+
+  // Active cue with no highlight — clickable glowing span
+  if (cueActive && !hl) {
+    return (
+      <span
+        key={`cue-${keyIndex}`}
+        data-offset={offset}
+        className="bg-camel/15 text-primary rounded-sm transition-colors duration-75 cursor-pointer hover:bg-camel/25"
+        onClick={(e) => { e.stopPropagation(); seekYouTubeVideo(cueRange.seconds) }}
+        title="Click to seek video"
+      >
+        <FormattedSpan text={slice} baseOffset={offset} />
       </span>
     )
   }
 
-  return <>{parts}</>
+  // Highlight (with or without cue)
+  if (hl) {
+    return (
+      <mark
+        key={hl.id + '-' + keyIndex}
+        data-offset={offset}
+        data-highlight-id={hl.id}
+        className={`rounded px-0.5 transition-all ${cueActive ? 'ring-1 ring-camel/40' : ''}`}
+        style={{ backgroundColor: color.bg }}
+      >
+        <FormattedSpan text={slice} baseOffset={offset} />
+      </mark>
+    )
+  }
+
+  // Plain text
+  return (
+    <span key={`plain-${keyIndex}`} data-offset={offset}>
+      <FormattedSpan text={slice} baseOffset={offset} />
+    </span>
+  )
 }
 
 

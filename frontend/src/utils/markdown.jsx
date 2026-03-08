@@ -186,7 +186,7 @@ export function renderInlineElements(text, navigateToRef, keyPrefix = '') {
  * @param {function} navigateToRef - Function to handle [[ref]] clicks
  * @param {boolean} inheritFontSize - If true, uses 'inherit' for font sizes (for zoom control)
  */
-export function MarkdownContent({ content, className = "", navigateToRef, inheritFontSize = false }) {
+export function MarkdownContent({ content, className = "", navigateToRef, inheritFontSize = false, prose = false }) {
   const renderedContent = useMemo(() => {
     if (!content) return null
 
@@ -202,6 +202,15 @@ export function MarkdownContent({ content, className = "", navigateToRef, inheri
     // Font size classes - when inheritFontSize is true, we don't set explicit sizes
     const textClass = inheritFontSize ? '' : 'text-sm'
     const codeClass = inheritFontSize ? 'text-[0.75em]' : 'text-[11px]'
+
+    // Spacing: prose mode uses Reader-like generous spacing
+    const pClass = prose ? `${textClass} text-secondary mb-3 leading-relaxed` : `${textClass} text-secondary my-0.5`
+    const h4Class = prose ? `font-semibold text-primary mt-6 mb-2 ${textClass}` : `font-semibold text-primary mt-2 mb-1 ${textClass}`
+    const h3Class = prose ? `font-semibold text-primary mt-6 mb-2 ${textClass}` : `font-semibold text-primary mt-2 mb-1 ${textClass}`
+    const listClass = prose ? 'flex gap-3 my-1.5' : 'flex gap-2 my-0.5'
+    const listTextClass = prose ? `${textClass} leading-relaxed` : textClass
+    const hrClass = prose ? 'border-subtle my-6' : 'border-subtle my-4'
+    const emptyClass = prose ? 'h-3' : 'h-2'
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]
@@ -230,12 +239,12 @@ export function MarkdownContent({ content, className = "", navigateToRef, inheri
       // Headers (with or without space after #)
       const h3Match = line.match(/^###\s*(.+)/)
       if (h3Match) {
-        elements.push(<h4 key={key++} className={`font-semibold text-primary mt-2 mb-1 ${textClass}`}>{renderInlineElements(h3Match[1], navigateToRef, `h4-${i}`)}</h4>)
+        elements.push(<h4 key={key++} className={h4Class}>{renderInlineElements(h3Match[1], navigateToRef, `h4-${i}`)}</h4>)
         continue
       }
       const h2Match = line.match(/^##\s*(.+)/)
       if (h2Match) {
-        elements.push(<h3 key={key++} className={`font-semibold text-primary mt-2 mb-1 ${textClass}`}>{renderInlineElements(h2Match[1], navigateToRef, `h3-${i}`)}</h3>)
+        elements.push(<h3 key={key++} className={h3Class}>{renderInlineElements(h2Match[1], navigateToRef, `h3-${i}`)}</h3>)
         continue
       }
       const h1Match = line.match(/^#\s*(.+)/)
@@ -247,9 +256,9 @@ export function MarkdownContent({ content, className = "", navigateToRef, inheri
       // List items
       if (line.match(/^[\-\*]\s/)) {
         elements.push(
-          <div key={key++} className="flex gap-2 my-0.5">
+          <div key={key++} className={listClass}>
             <span className="text-muted">•</span>
-            <span className={textClass}>{renderInlineElements(line.slice(2), navigateToRef, `li-${i}`)}</span>
+            <span className={listTextClass}>{renderInlineElements(line.slice(2), navigateToRef, `li-${i}`)}</span>
           </div>
         )
         continue
@@ -259,9 +268,9 @@ export function MarkdownContent({ content, className = "", navigateToRef, inheri
       if (line.match(/^\d+\.\s/)) {
         const num = line.match(/^(\d+)\./)[1]
         elements.push(
-          <div key={key++} className="flex gap-2 my-0.5">
-            <span className={`text-muted w-4 ${textClass}`}>{num}.</span>
-            <span className={textClass}>{renderInlineElements(line.replace(/^\d+\.\s/, ''), navigateToRef, `ol-${i}`)}</span>
+          <div key={key++} className={listClass}>
+            <span className={`text-muted w-4 ${listTextClass}`}>{num}.</span>
+            <span className={listTextClass}>{renderInlineElements(line.replace(/^\d+\.\s/, ''), navigateToRef, `ol-${i}`)}</span>
           </div>
         )
         continue
@@ -293,22 +302,22 @@ export function MarkdownContent({ content, className = "", navigateToRef, inheri
 
       // Horizontal rule (---, ***, ___)
       if (line.trim().match(/^[-*_]{3,}$/)) {
-        elements.push(<hr key={key++} className="border-subtle my-4" />)
+        elements.push(<hr key={key++} className={hrClass} />)
         continue
       }
 
       // Empty line
       if (line.trim() === '') {
-        elements.push(<div key={key++} className="h-2" />)
+        elements.push(<div key={key++} className={emptyClass} />)
         continue
       }
 
       // Regular paragraph
-      elements.push(<p key={key++} className={`${textClass} text-secondary my-0.5`}>{renderInlineElements(line, navigateToRef, `p-${i}`)}</p>)
+      elements.push(<p key={key++} className={pClass}>{renderInlineElements(line, navigateToRef, `p-${i}`)}</p>)
     }
 
     return elements
-  }, [content, navigateToRef, inheritFontSize])
+  }, [content, navigateToRef, inheritFontSize, prose])
 
   return (
     <div className={`text-secondary leading-relaxed ${className}`}>

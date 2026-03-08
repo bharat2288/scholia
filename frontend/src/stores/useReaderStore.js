@@ -45,6 +45,13 @@ const useReaderStore = create((set, get) => ({
   highlightMenuOpen: false,
   highlightMenuPosition: { x: 0, y: 0 },
 
+  // Video playback sync state
+  transcriptCues: [],            // Array of { cue_index, start_time, end_time, start_offset, end_offset }
+  currentPlaybackTime: 0,        // Current video time in seconds
+  isVideoPlaying: false,
+  activeCueIndex: -1,            // Index into transcriptCues of currently active cue
+  autoScrollEnabled: true,       // Whether to auto-scroll transcript during playback
+
   // Sidebar state
   sidebarTab: 'highlights',  // 'highlights', 'notes', 'backlinks'
 
@@ -125,6 +132,44 @@ const useReaderStore = create((set, get) => ({
     set({ fontSize: clamped })
   },
 
+  // Video playback actions
+  setTranscriptCues: (cues) => set({ transcriptCues: cues }),
+
+  setPlaybackTime: (time) => {
+    const { transcriptCues, activeCueIndex } = get()
+    if (!transcriptCues.length) {
+      set({ currentPlaybackTime: time })
+      return
+    }
+
+    // Binary search for active cue by time
+    let lo = 0, hi = transcriptCues.length - 1
+    let newIndex = -1
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      const cue = transcriptCues[mid]
+      if (time >= cue.start_time && time < cue.end_time) {
+        newIndex = mid
+        break
+      } else if (time < cue.start_time) {
+        hi = mid - 1
+      } else {
+        lo = mid + 1
+      }
+    }
+
+    // Only update if cue changed (avoids unnecessary re-renders)
+    if (newIndex !== activeCueIndex) {
+      set({ currentPlaybackTime: time, activeCueIndex: newIndex })
+    } else {
+      set({ currentPlaybackTime: time })
+    }
+  },
+
+  setVideoPlaying: (playing) => set({ isVideoPlaying: playing }),
+
+  setAutoScrollEnabled: (enabled) => set({ autoScrollEnabled: enabled }),
+
   // Reset state when leaving reader
   reset: () => set({
     document: null,
@@ -135,6 +180,11 @@ const useReaderStore = create((set, get) => ({
     highlightMenuOpen: false,
     currentSectionId: null,
     scrollPosition: 0,
+    transcriptCues: [],
+    currentPlaybackTime: 0,
+    isVideoPlaying: false,
+    activeCueIndex: -1,
+    autoScrollEnabled: true,
   }),
 
   // Get highlights for a specific section

@@ -7,6 +7,7 @@ cssclasses:
 ---
 # Scholia
 *[[dev-hub|Hub]] · [[README|GitHub]]*
+<span class="hub-status">SRT-synchronized video reading complete — karaoke phrase glow, bidirectional linking, analysis anchoring, 10 videos backfilled</span>
 
 Marginal notes and annotations system. OCR-processed documents, source ingestion, research sessions, WhatsApp integration.
 

@@ -1058,6 +1058,18 @@ async def clip_video_endpoint(request: ClipVideoRequest):
         SELECT rowid, title, author_display FROM sources WHERE id = ?
     """, [source_id])
 
+    # Store transcript cues (time → offset mapping for sync playback)
+    if result.transcript_cues:
+        for cue in result.transcript_cues:
+            await db.execute("""
+                INSERT INTO transcript_cues
+                    (source_id, cue_index, start_time, end_time, text, start_offset, end_offset)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, [
+                source_id, cue.cue_index, cue.start_time, cue.end_time,
+                cue.text, cue.start_offset, cue.end_offset
+            ])
+
     await db.commit()
 
     return {
@@ -1246,6 +1258,69 @@ async def analyze_source_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ============================================================
+# Transcript Cue Regeneration (backfill for existing videos)
+# ============================================================
+
+@router.post("/{source_id}/regenerate-cues")
+async def regenerate_cues(source_id: str):
+    """
+    Re-fetch transcript from YouTube and align cues to existing content.
+    Used to backfill transcript_cues for videos clipped before sync was added.
+    """
+    from services.video_clipper import (
+        _fetch_youtube_transcript, align_cues_to_content
+    )
+
+    db = await get_db()
+
+    # Get source and verify it's a media type
+    cursor = await db.execute(
+        "SELECT source_type, metadata, content_path FROM sources WHERE id = ?",
+        [source_id]
+    )
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    source_type, metadata_json, content_path = row
+    if source_type != "media":
+        raise HTTPException(status_code=400, detail="Not a media source")
+
+    metadata = json.loads(metadata_json) if metadata_json else {}
+    video_id = metadata.get("video_id")
+    if not video_id:
+        raise HTTPException(status_code=400, detail="No video_id in metadata")
+
+    # Read existing content
+    content = Path(content_path).read_text(encoding="utf-8")
+
+    # Re-fetch transcript segments
+    segments, _ = _fetch_youtube_transcript(video_id)
+
+    # Align to existing content
+    cues = align_cues_to_content(segments, content)
+
+    # Delete old cues and insert new
+    await db.execute("DELETE FROM transcript_cues WHERE source_id = ?", [source_id])
+    for cue in cues:
+        await db.execute("""
+            INSERT INTO transcript_cues
+                (source_id, cue_index, start_time, end_time, text, start_offset, end_offset)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, [
+            source_id, cue.cue_index, cue.start_time, cue.end_time,
+            cue.text, cue.start_offset, cue.end_offset
+        ])
+    await db.commit()
+
+    return {
+        "source_id": source_id,
+        "cues_generated": len(cues),
+        "segments_total": len(segments),
+    }
 
 
 # ============================================================

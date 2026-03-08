@@ -166,6 +166,28 @@ async def get_source_content(
         for row in analysis_rows
     ]
 
+    # Include transcript cues for media sources (video sync playback)
+    if source.get("source_type") == "media":
+        cursor = await db.execute(
+            """SELECT cue_index, start_time, end_time, start_offset, end_offset
+               FROM transcript_cues
+               WHERE source_id = ?
+               ORDER BY cue_index""",
+            [source_id]
+        )
+        cue_rows = await cursor.fetchall()
+        if cue_rows:
+            result["transcript_cues"] = [
+                {
+                    "cue_index": row[0],
+                    "start_time": row[1],
+                    "end_time": row[2],
+                    "start_offset": row[3],
+                    "end_offset": row[4],
+                }
+                for row in cue_rows
+            ]
+
     # Include sections if requested
     if include_sections:
         cursor = await db.execute(

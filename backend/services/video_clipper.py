@@ -65,6 +65,17 @@ class VideoMetadata:
 
 
 @dataclass
+class TranscriptCue:
+    """A single cue mapping time range to character offset range in content."""
+    cue_index: int
+    start_time: float
+    end_time: float
+    text: str
+    start_offset: int  # Character position in final content
+    end_offset: int    # Character position in final content
+
+
+@dataclass
 class VideoClipResult:
     """Result of video clipping operation."""
     url: str
@@ -80,6 +91,7 @@ class VideoClipResult:
     segment_count: int
     sections: List[dict]
     metadata: VideoMetadata
+    transcript_cues: List[TranscriptCue] = field(default_factory=list)
 
 
 def extract_video_id(url: str) -> Tuple[str, str]:
@@ -457,6 +469,61 @@ def _build_content_without_chapters(
         lines.append("")
 
 
+def align_cues_to_content(
+    segments: List[TranscriptSegment],
+    content: str
+) -> List[TranscriptCue]:
+    """
+    Map each transcript segment's text to its character offset in the final content.
+
+    Walks through content with a cursor, finding each segment's text via substring
+    search starting from the last known position. This works because segments appear
+    in order in the content (joined into 60-second chunks).
+
+    Returns:
+        List of TranscriptCue with time + offset mapping
+    """
+    cues = []
+    cursor = 0  # Current position in content
+
+    for i, seg in enumerate(segments):
+        # Clean the segment text (same normalization as _build_content)
+        text = seg.text.strip()
+        if not text:
+            continue
+
+        # Find this text in content starting from cursor
+        pos = content.find(text, cursor)
+        if pos == -1:
+            # Fallback: try case-insensitive or partial match
+            # This handles edge cases where whitespace differs
+            lower_content = content[cursor:].lower()
+            lower_text = text.lower()
+            rel_pos = lower_content.find(lower_text)
+            if rel_pos != -1:
+                pos = cursor + rel_pos
+            else:
+                logger.debug(f"Cue alignment miss for segment {i}: '{text[:40]}...'")
+                continue
+
+        end_time = seg.start + seg.duration
+
+        cues.append(TranscriptCue(
+            cue_index=len(cues),
+            start_time=seg.start,
+            end_time=end_time,
+            text=text,
+            start_offset=pos,
+            end_offset=pos + len(text),
+        ))
+
+        # Advance cursor past this match
+        cursor = pos + len(text)
+
+    logger.info(f"Aligned {len(cues)}/{len(segments)} cues to content offsets")
+    return cues
+
+
 def _sanitize_folder_name(name: str, max_length: int = 50) -> str:
     """Sanitize a string for use as a folder name."""
     # Remove/replace problematic characters
@@ -506,6 +573,9 @@ async def clip_video(
 
     # Build content
     content, sections = _build_content(metadata, segments, full_text)
+
+    # Align transcript segments to character offsets in content
+    transcript_cues = align_cues_to_content(segments, content)
 
     # Create output folder
     channel_safe = _sanitize_folder_name(metadata.channel, 30)
@@ -570,5 +640,6 @@ async def clip_video(
         word_count=len(full_text.split()),
         segment_count=len(segments),
         sections=sections,
-        metadata=metadata
+        metadata=metadata,
+        transcript_cues=transcript_cues,
     )

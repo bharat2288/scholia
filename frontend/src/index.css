@@ -163,3 +163,13 @@ html {
 .safe-area-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
+
+/* Transcript cue flash animation (analysis anchoring) */
+@keyframes cue-flash {
+  0% { background-color: rgba(212, 165, 116, 0.25); }
+  50% { background-color: rgba(212, 165, 116, 0.15); }
+  100% { background-color: transparent; }
+}
+.cue-flash {
+  animation: cue-flash 1s ease-out;
+}

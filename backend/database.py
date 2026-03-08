@@ -1316,6 +1316,30 @@ async def _create_schema():
         ON source_analyses(source_id)
     """)
 
+    # Transcript cues table - per-phrase timing mapped to character offsets
+    # Like highlights, these are an overlay on the same offset system
+    await _db.execute("""
+        CREATE TABLE IF NOT EXISTS transcript_cues (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+            cue_index INTEGER NOT NULL,
+            start_time REAL NOT NULL,
+            end_time REAL NOT NULL,
+            text TEXT NOT NULL,
+            start_offset INTEGER,
+            end_offset INTEGER,
+            UNIQUE(source_id, cue_index)
+        )
+    """)
+    await _db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_cues_source
+        ON transcript_cues(source_id)
+    """)
+    await _db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_cues_time
+        ON transcript_cues(source_id, start_time)
+    """)
+
     await _db.commit()
     print("Database schema created/verified")
 
