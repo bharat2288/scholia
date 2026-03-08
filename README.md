@@ -42,10 +42,18 @@ But my workflow kept bumping against edges:
 - Cross-document knowledge graph emerges naturally
 - Full-text search across all content
 
+### 🎬 Video Reading with SRT Sync
+- YouTube transcripts with chapter detection and timestamps
+- **Phrase-level karaoke highlighting** — the spoken phrase glows in the transcript as the video plays
+- Bidirectional linking: click text to seek video, video progress highlights text
+- Auto-scroll follows playback; timestamp badges in analysis content seek the video
+- Auto-analysis at ingestion (Summary, Key Claims) with pre-read triage flow
+
 ### 🌐 Multi-Source Capture
 - **Web clipper**: Save articles with preserved formatting (trafilatura)
 - **Tweet/thread clipper**: Capture Twitter threads and articles via URL (FxTwitter API)
 - **Video clipper**: YouTube transcripts with chapter detection and timestamps
+- **GitHub repo clipper**: LLM-powered file triage, two-stage import
 - **WhatsApp capture**: Send notes via WhatsApp webhook — auto-classified and tagged by Claude
 
 ### 🤖 Built-in LLM Chat
@@ -64,13 +72,20 @@ But my workflow kept bumping against edges:
 ### 🔬 Research Sessions
 - Multi-document AI conversations across your library
 - Add multiple sources to a session as context
-- Agentic RLM (Research Language Model) with tool use — the model can search, retrieve, and cross-reference your sources
-- Streaming responses with visible tool call feed
+- **Two execution engines:**
+  - **Tool-use RLM** — the model calls search, retrieve, and cross-reference tools
+  - **Code-execution RLM (v2)** — Sonnet writes Python to explore docs, Opus synthesizes the final answer (94% cost reduction vs. pure Opus)
+- Streaming responses with visible tool call / code execution feed
 
 ### 📚 Metadata Management
 - DOI lookup via Crossref, ISBN lookup via Open Library
 - AI-powered metadata suggestion (title, author, year, tags)
 - Batch metadata suggestion across your library
+
+### 📱 Mobile Responsive + PWA
+- Responsive layouts for mobile (<640px) and tablet (640–1024px)
+- Bottom navigation bar on mobile, toggleable sidebar on tablet
+- Installable as a Progressive Web App with offline caching
 
 ### ⚙️ PDF Processing Pipeline
 - Multi-tier extraction: Marker → dots-ocr → Tesseract
@@ -78,6 +93,11 @@ But my workflow kept bumping against edges:
 - Optional GPU acceleration via RunPod (remote pod management)
 - Figure extraction with bounding box cropping
 - Section Editor for fixing OCR errors
+
+### 📊 Eval Framework
+- Experiment runner for comparing synthesis model configurations
+- Cost/quality tradeoff analysis across model providers
+- Fidelity checks + LLM judging layers
 
 ---
 
@@ -126,9 +146,9 @@ https://github.com/user-attachments/assets/38a8b6c1-f0de-4f34-b6f3-f4023ff44cf2
 │                                                                  │
 │  INGESTION                                                       │
 │  ┌────────┐ ┌────────┐ ┌──────────┐ ┌────────┐ ┌──────────┐    │
-│  │  PDF   │ │  EPUB  │ │   Web    │ │ Video  │ │ WhatsApp │    │
-│  │Marker/ │ │ebooklib│ │trafilat. │ │ yt-dlp │ │ webhook  │    │
-│  │dots-ocr│ │        │ │FxTwitter │ │        │ │          │    │
+│  │  PDF   │ │  EPUB  │ │   Web    │ │ Video  │ │WhatsApp/ │    │
+│  │Marker/ │ │ebooklib│ │trafilat. │ │ yt-dlp │ │ GitHub   │    │
+│  │dots-ocr│ │        │ │FxTwitter │ │  +SRT  │ │          │    │
 │  └───┬────┘ └───┬────┘ └────┬─────┘ └───┬────┘ └────┬─────┘    │
 │      └──────────┴───────────┴────────────┴───────────┘          │
 │                            ↓                                     │
@@ -144,9 +164,9 @@ https://github.com/user-attachments/assets/38a8b6c1-f0de-4f34-b6f3-f4023ff44cf2
 │                           ↓                                      │
 │  LLM LAYER                                                      │
 │  ┌────────────┬───────────────┬──────────────────────────┐      │
-│  │ Chat (1:1) │ Council (n:1) │ RLM Agent (tool-using)   │      │
-│  │            │ 3 models +    │ search, retrieve, cross-  │      │
-│  │            │ synthesizer   │ reference across sources  │      │
+│  │ Chat (1:1) │ Council (n:1) │ Research (RLM)            │      │
+│  │            │ 3 models +    │ v1: tool-use agent         │      │
+│  │            │ synthesizer   │ v2: code-exec + synthesis  │      │
 │  └────────────┴───────────────┴──────────────────────────┘      │
 │                           ↓                                      │
 │  FRONTEND (React + TanStack Query + Zustand)                    │
@@ -230,6 +250,7 @@ scholia/
 │   ├── database.py            # SQLite + migrations
 │   ├── routers/               # API endpoints
 │   │   ├── sources.py         # Unified source CRUD + clipping
+│   │   ├── analysis.py        # Video analysis pipeline + cue regeneration
 │   │   ├── reading.py         # Content delivery + position tracking
 │   │   ├── highlights.py      # Offset-based annotation
 │   │   ├── gluons.py          # Notes, tags, linking, backlinks
@@ -237,24 +258,32 @@ scholia/
 │   │   ├── council.py         # Multi-model council + presets
 │   │   ├── sessions.py        # Research sessions + RLM agent
 │   │   ├── processor.py       # PDF processing pipeline
-│   │   ├── runpod.py          # Remote GPU pod management
-│   │   ├── metadata_lookup.py # DOI/ISBN lookup
-│   │   └── whatsapp.py        # WhatsApp webhook capture
+│   │   ├── journal.py         # Daily journal + WhatsApp capture
+│   │   └── metadata_lookup.py # DOI/ISBN lookup
 │   └── services/              # Business logic
 │       ├── chat/              # Chat service + config
 │       ├── council/           # Council service + preset definitions
 │       ├── lit_engine/        # PDF extraction (marker, dots-ocr, epub)
+│       ├── analysis_engine.py # One-shot LLM analysis (Summary, Key Claims)
 │       ├── rlm_agent.py       # Agentic research model with tools
+│       ├── rlm_v2_engine.py   # Code-execution research engine
+│       ├── video_clipper.py   # YouTube transcript + SRT cue alignment
 │       ├── web_clipper.py     # Web article extraction
 │       ├── tweet_clipper.py   # Twitter/X thread capture
-│       ├── video_clipper.py   # YouTube transcript extraction
 │       └── metadata_ai.py    # AI-powered metadata suggestion
 │
 ├── frontend/
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── Library/       # Source browsing + import
-│   │   │   ├── Reader/        # Reading interface + chat sidebar
+│   │   │   ├── Reader/        # Reading interface (7 sub-modules)
+│   │   │   │   ├── Reader.jsx          # Main component + sidebar + annotations
+│   │   │   │   ├── ReadingContent.jsx  # Document body + analysis sections
+│   │   │   │   ├── Segment.jsx         # Segment parsing + rendering
+│   │   │   │   ├── OffsetText.jsx      # Highlight/cue marker overlay
+│   │   │   │   ├── FormattedSpan.jsx   # Inline markdown formatting
+│   │   │   │   ├── YouTubePlayer.jsx   # Sticky video player + seek
+│   │   │   │   └── readerUtils.jsx     # Shared constants + utilities
 │   │   │   ├── Editor/        # Section editor for OCR fixes
 │   │   │   ├── Knowledge/     # Gluon browsing + search
 │   │   │   ├── Gluon/         # Individual gluon view
@@ -266,6 +295,7 @@ scholia/
 │   │   └── config.js          # API base URL configuration
 │   └── index.html
 │
+├── eval/                      # Experiment framework for model comparison
 └── data/                      # SQLite database + extracted content (gitignored)
 ```
 
@@ -283,19 +313,6 @@ This is alpha software. Things may break. The database schema may change.
 
 ---
 
-## Deep Dives
-
-Detailed documentation on design decisions and architecture:
-
-- **[Chat vs. Research Sessions](docs/chat-vs-research.md)** — Stateless Q&A vs. agentic multi-source investigation
-- **[The PDF Pipeline](docs/pdf-pipeline.md)** — Multi-tier extraction, RunPod GPU offloading, Section Editor
-- **[Gluons: The Knowledge Graph](docs/gluons.md)** — Bidirectional linking, highlights-as-objects, and the `[[reference]]` system
-- **[Metadata & Autotagging](docs/metadata-autotagging.md)** — DOI/ISBN lookup, AI-powered suggestion, batch processing
-- **[Analytical Presets](docs/presets.md)** — One-click analytical moves with structured prompts
-- **[Council Mode](docs/council-mode.md)** — Multi-model deliberation and synthesis
-
----
-
 ## Roadmap
 
 - [x] Core reading + highlighting
@@ -304,8 +321,14 @@ Detailed documentation on design decisions and architecture:
 - [x] LLM chat integration
 - [x] Analytical presets (summarize, analyze, critique, etc.)
 - [x] Research Sessions (multi-document AI with tool use)
+- [x] Code-execution RLM engine (Sonnet code → Opus synthesis)
 - [x] Metadata management (DOI/ISBN lookup, AI suggestion)
-- [x] WhatsApp capture
+- [x] WhatsApp capture + daily journal
+- [x] SRT-synchronized video reading with karaoke sync
+- [x] Video analysis pipeline (auto-analysis at ingestion)
+- [x] GitHub repo ingestion (LLM-powered file triage)
+- [x] Mobile responsive + PWA
+- [x] Eval framework for model comparison
 - [ ] Browser extension for quick capture
 
 ---

@@ -109,9 +109,10 @@ async def health():
 
 
 # Import routers
-from routers import sources, reading, highlights, gluons, processor, runpod, metadata_lookup, council, chat, sessions, whatsapp, journal, eval_dashboard
+from routers import sources, analysis, reading, highlights, gluons, processor, runpod, metadata_lookup, council, chat, sessions, whatsapp, journal, eval_dashboard
 
-# Register routers
+# Register routers — analysis before sources so static routes aren't captured by /{source_id}
+app.include_router(analysis.router, prefix="/sources", tags=["analysis"])
 app.include_router(sources.router, prefix="/sources", tags=["sources"])
 app.include_router(reading.router, prefix="/reading", tags=["reading"])
 app.include_router(highlights.router, prefix="/highlights", tags=["highlights"])

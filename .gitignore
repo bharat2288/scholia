@@ -44,6 +44,9 @@ nul
 # Windows artifacts
 *.lnk
 
+# Demos (private — curated assets chosen for README separately)
+demos/
+
 # Eval reports (generated, not tracked)
 eval/reports/
 
