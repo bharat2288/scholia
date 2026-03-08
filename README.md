@@ -11,8 +11,6 @@ A local-first research knowledge system for reading, annotating, and connecting 
 
 ## Demos
 
-> Click any thumbnail to watch the demo on YouTube.
-
 ### Library
 Browse, search, filter, and sort your sources — PDFs, web articles, tweets, video transcripts — in card or row view.
 
@@ -21,27 +19,27 @@ https://github.com/user-attachments/assets/2a929a97-f6c0-4123-9274-feb1dab1cb50
 ### Reader + Highlights
 Three-pane reading interface with Table of Contents navigation, multi-color highlighting, and annotations.
 
-[![Reader highlights demo](https://img.youtube.com/vi/Eb3Vds7xuvc/hqdefault.jpg)](https://youtu.be/Eb3Vds7xuvc)
+https://github.com/user-attachments/assets/d237d5c9-4f59-4bb3-ac01-b52b7dc5b397
 
 ### Reader + AI Chat
 Per-document AI conversations with history, analytical presets, model selection, and Council mode.
 
-[![Reader chat demo](https://img.youtube.com/vi/mFFDCuspCjY/hqdefault.jpg)](https://youtu.be/mFFDCuspCjY)
+https://github.com/user-attachments/assets/66ad38e5-0cf3-4643-946a-1bf4e7354b95
 
 ### Knowledge Hub
 Cross-document knowledge browsing — notes, highlights, tags, people, journal, and chat history.
 
-[![Knowledge hub demo](https://img.youtube.com/vi/GPMcl3yoc_M/hqdefault.jpg)](https://youtu.be/GPMcl3yoc_M)
+https://github.com/user-attachments/assets/c2735cc3-e311-4534-b1a4-11adb04ecf2b
 
 ### Research Sessions
 Multi-document AI research with agentic tool use, evidence traces, and source cross-referencing.
 
-[![Research sessions demo](https://img.youtube.com/vi/NskWBlqMcDE/hqdefault.jpg)](https://youtu.be/NskWBlqMcDE)
+https://github.com/user-attachments/assets/aff07efd-4ed3-448c-9b8d-4cac4c34c48e
 
 ### Section Editor
 Three-pane editing with PDF reference, syntax-highlighted markers, and structure analysis.
 
-[![Section editor demo](https://img.youtube.com/vi/veeLocTO4pE/hqdefault.jpg)](https://youtu.be/veeLocTO4pE)
+https://github.com/user-attachments/assets/38a8b6c1-f0de-4f34-b6f3-f4023ff44cf2
 
 ---
 
