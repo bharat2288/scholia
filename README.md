@@ -16,7 +16,7 @@ A local-first research knowledge system for reading, annotating, and connecting 
 ### Library
 Browse, search, filter, and sort your sources — PDFs, web articles, tweets, video transcripts — in card or row view.
 
-[![Library demo](https://img.youtube.com/vi/9IpuMPofeaA/hqdefault.jpg)](https://youtu.be/9IpuMPofeaA)
+https://github.com/user-attachments/assets/2a929a97-f6c0-4123-9274-feb1dab1cb50
 
 ### Reader + Highlights
 Three-pane reading interface with Table of Contents navigation, multi-color highlighting, and annotations.
