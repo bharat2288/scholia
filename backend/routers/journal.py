@@ -167,12 +167,14 @@ async def list_journal_categories():
 @router.get("")
 async def list_journal_entries(
     days: int = Query(30, ge=1, le=365, description="Number of days to look back"),
-    category: Optional[str] = Query(None, description="Filter by category tag")
+    category: Optional[str] = Query(None, description="Filter by category tag"),
+    include_open_tasks: bool = Query(False, description="Include all open tasks regardless of date")
 ):
     """
     List journal entries grouped by date then category.
 
     Returns a dict of date -> category -> entries[], sorted reverse chronological.
+    When include_open_tasks is True, also returns tasks with completed=0 from any date.
     """
     db = await get_db()
 
@@ -289,7 +291,40 @@ async def list_journal_entries(
         )
         await db.commit()
 
-    return {"entries": entries, "tag_map": tag_map}
+    # Fetch open tasks separately when requested (all pending tasks, any date)
+    open_tasks_list: list = []
+    if include_open_tasks:
+        ot_cursor = await db.execute("""
+            SELECT g.id, g.content, g.body, g.completed, g.captured_via,
+                   g.created_at, g.updated_at,
+                   GROUP_CONCAT(t.content, ',') as categories,
+                   GROUP_CONCAT(t.id, ',') as category_ids
+            FROM gluons g
+            LEFT JOIN links l ON l.source_id = g.id AND l.link_type = 'tag'
+            LEFT JOIN gluons t ON l.target_id = t.id AND t.type = 'tag'
+            WHERE g.type = 'journal_entry' AND g.completed = 0
+            GROUP BY g.id
+            ORDER BY g.created_at DESC
+        """)
+        ot_rows = await ot_cursor.fetchall()
+        ot_columns = [desc[0] for desc in ot_cursor.description]
+
+        for row in ot_rows:
+            ot_entry = dict(zip(ot_columns, row))
+            cats_str = ot_entry.pop("categories", None)
+            ids_str = ot_entry.pop("category_ids", None)
+            ot_entry["tags"] = [c.strip() for c in cats_str.split(",")] if cats_str else ["task"]
+            ot_entry["person_refs"] = person_refs_map.get(ot_entry["id"], [])
+
+            # Build tag_map entries for any tags in open tasks
+            if ids_str:
+                for name, tid in zip(ot_entry["tags"], ids_str.split(",")):
+                    if name not in tag_map:
+                        tag_map[name] = tid.strip()
+
+            open_tasks_list.append(ot_entry)
+
+    return {"entries": entries, "tag_map": tag_map, "open_tasks": open_tasks_list}
 
 
 @router.post("")

@@ -53,8 +53,19 @@ function formatDateHeading(dateStr) {
 export default function JournalPanel({ searchQuery }) {
   const [categoryFilter, setCategoryFilter] = useState(null)
   const [isCreating, setIsCreating] = useState(false)
+  const [showOpenTasks, setShowOpenTasks] = useState(
+    () => localStorage.getItem('scholia-journal-open-tasks') === 'true'
+  )
 
-  const { data, isLoading, error } = useJournalEntries(30, categoryFilter)
+  const toggleOpenTasks = () => {
+    setShowOpenTasks(prev => {
+      const next = !prev
+      localStorage.setItem('scholia-journal-open-tasks', String(next))
+      return next
+    })
+  }
+
+  const { data, isLoading, error } = useJournalEntries(30, categoryFilter, showOpenTasks)
   const { data: categories } = useJournalCategories()
 
   // Build filter chip list: "All" + dynamic categories from DB
@@ -80,6 +91,7 @@ export default function JournalPanel({ searchQuery }) {
 
   const entries = data?.entries || {}
   const tagMap = data?.tag_map || {}
+  const openTasks = data?.open_tasks || []
 
   const dateKeys = Object.keys(entries).sort().reverse()
 
@@ -117,13 +129,26 @@ export default function JournalPanel({ searchQuery }) {
           )}
         </p>
 
-        <button
-          onClick={() => setIsCreating(!isCreating)}
-          className="px-3 py-1.5 text-sm font-medium bg-camel text-base rounded-lg
-                     hover:bg-camel/90 transition-colors"
-        >
-          + New Entry
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={toggleOpenTasks}
+            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+              showOpenTasks
+                ? 'bg-camel/20 text-camel border border-camel/30'
+                : 'bg-raised text-tertiary hover:text-secondary border border-transparent'
+            }`}
+            title="Show all open tasks regardless of date"
+          >
+            Open Tasks
+          </button>
+          <button
+            onClick={() => setIsCreating(!isCreating)}
+            className="px-3 py-1.5 text-sm font-medium bg-camel text-base rounded-lg
+                       hover:bg-camel/90 transition-colors"
+          >
+            + New Entry
+          </button>
+        </div>
       </div>
 
       {/* Category filter chips (dynamic from DB) */}
@@ -150,8 +175,29 @@ export default function JournalPanel({ searchQuery }) {
         />
       )}
 
+      {/* Open Tasks section — pulled to top when toggle is on */}
+      {showOpenTasks && openTasks.length > 0 && (
+        <div className="mb-8">
+          <h2 className="font-display text-xl text-primary mb-4">
+            Open Tasks
+            <span className="text-muted text-sm font-sans ml-3">{openTasks.length}</span>
+          </h2>
+          <div className="space-y-1 pl-1">
+            {openTasks
+              .filter(e => !searchQuery ||
+                e.content?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                e.body?.toLowerCase().includes(searchQuery.toLowerCase())
+              )
+              .map(entry => (
+                <JournalEntryRow key={entry.id} entry={entry} primaryCategory="task" tagMap={tagMap} />
+              ))}
+          </div>
+          <hr className="border-subtle mt-6" />
+        </div>
+      )}
+
       {/* Date groups */}
-      {filteredDates.length === 0 ? (
+      {filteredDates.length === 0 && !(showOpenTasks && openTasks.length > 0) ? (
         <div className="text-muted text-center py-12">
           {searchQuery ? 'No matching journal entries' : 'No journal entries yet. Create one above.'}
         </div>
@@ -174,7 +220,7 @@ export default function JournalPanel({ searchQuery }) {
 
 
 function JournalEntryForm({ onClose }) {
-  const [content, setContent] = useState('')
+  const [content, setContent] = useState('##task ')
   const [body, setBody] = useState('')
   const createEntry = useCreateJournalEntry()
   const queryClient = useQueryClient()

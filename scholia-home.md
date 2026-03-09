@@ -7,9 +7,11 @@ cssclasses:
 ---
 # Scholia
 *[[dev-hub|Hub]] · [[README|GitHub]]*
-<span class="hub-status">SRT-synchronized video reading complete — karaoke phrase glow, bidirectional linking, analysis anchoring, 10 videos backfilled</span>
+<span class="hub-status">Impact Graph declaration complete — 65 nodes, 98 edges, 12 traced events with read-side propagation</span>
 
 Marginal notes and annotations system. OCR-processed documents, source ingestion, research sessions, WhatsApp integration.
+
+![[v_library.png]]
 
 ## Specs
 

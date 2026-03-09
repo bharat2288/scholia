@@ -948,12 +948,13 @@ export function useFindOrCreatePeople() {
 /**
  * Fetch journal entries grouped by date then category
  */
-export function useJournalEntries(days = 30, category = null) {
+export function useJournalEntries(days = 30, category = null, includeOpenTasks = false) {
   const params = new URLSearchParams({ days: days.toString() })
   if (category) params.set('category', category)
+  if (includeOpenTasks) params.set('include_open_tasks', 'true')
 
   return useQuery({
-    queryKey: ['journal', days, category],
+    queryKey: ['journal', days, category, includeOpenTasks],
     queryFn: () => apiFetch(`/journal?${params}`),
   })
 }
