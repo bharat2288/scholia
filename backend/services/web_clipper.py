@@ -98,6 +98,101 @@ def _texts_similar(text1: str, text2: str) -> bool:
     return t1 in t2 or t2 in t1 or t1 == t2
 
 
+def _extract_nextjs_content(html: str) -> Optional[Tuple[str, dict]]:
+    """
+    Extract article content from Next.js __NEXT_DATA__ JSON if present.
+
+    Many modern sites (Vercel, tech blogs, Stripe) embed page content in
+    <script id="__NEXT_DATA__"> as a JSON blob rather than in static HTML.
+    The clipper's BeautifulSoup pipeline strips <script> tags, losing this content.
+
+    Returns:
+        Tuple of (content_string, metadata_dict) or None if not a Next.js page
+        or no content found in the JSON.
+    """
+    soup = BeautifulSoup(html, 'html.parser')
+    next_data_tag = soup.find('script', id='__NEXT_DATA__')
+    if not next_data_tag or not next_data_tag.string:
+        return None
+
+    try:
+        data = json.loads(next_data_tag.string)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    page_props = data.get('props', {}).get('pageProps', {})
+    if not page_props:
+        return None
+
+    # Walk common Next.js blog content locations
+    content = None
+    metadata = {}
+
+    for container_key in ['postData', 'post', 'article', 'data', 'entry', 'page']:
+        container = page_props.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        for content_key in ['content', 'body', 'html', 'markdown', 'text', 'rawContent']:
+            candidate = container.get(content_key)
+            if isinstance(candidate, str) and len(candidate) > 200:
+                content = candidate
+                # Extract metadata from the same container
+                metadata['title'] = container.get('title')
+                metadata['date'] = container.get('date') or container.get('publishedAt')
+                metadata['description'] = (
+                    container.get('summary') or container.get('description')
+                    or container.get('excerpt')
+                )
+                # Author may be string, list of strings, or list of dicts
+                authors = container.get('authors') or container.get('author')
+                if isinstance(authors, list):
+                    metadata['author'] = ', '.join(
+                        a if isinstance(a, str)
+                        else a.get('name', a.get('slug', ''))
+                        for a in authors
+                    )
+                elif isinstance(authors, str):
+                    metadata['author'] = authors
+                elif isinstance(authors, dict):
+                    metadata['author'] = authors.get('name', '')
+                break
+        if content:
+            break
+
+    # Also try content directly on pageProps
+    if not content:
+        for content_key in ['content', 'body', 'markdown']:
+            candidate = page_props.get(content_key)
+            if isinstance(candidate, str) and len(candidate) > 200:
+                content = candidate
+                break
+
+    if not content:
+        return None
+
+    logger.info(f"Extracted {len(content)} chars from Next.js __NEXT_DATA__")
+    return content, metadata
+
+
+def _markdown_to_scholia_format(text: str) -> str:
+    """
+    Convert standard markdown headings to Scholia [SECTION] markers.
+    Other markdown formatting (bold, italic, code, links, lists) passes through
+    unchanged since Scholia content is already markdown-based.
+    """
+    lines = text.split('\n')
+    result = []
+    for line in lines:
+        heading_match = re.match(r'^(#{1,6})\s+(.+)$', line)
+        if heading_match:
+            hashes = heading_match.group(1)
+            heading_text = heading_match.group(2).strip()
+            result.append(f'\n[SECTION] {hashes} {heading_text}\n')
+        else:
+            result.append(line)
+    return '\n'.join(result)
+
+
 class ScholiaMarkdownConverter(MarkdownConverter):
     """
     Custom markdown converter that produces Scholia-formatted output.
@@ -635,48 +730,75 @@ async def clip_url(
         else:
             title = _extract_domain(url)
 
-    # Extract main content using BeautifulSoup
-    # trafilatura's HTML output strips headings, so we extract directly
-    soup = BeautifulSoup(html, 'html.parser')
+    # ── Try Next.js __NEXT_DATA__ extraction first ──
+    # Many modern sites (Vercel, tech blogs, Stripe) embed content in JSON
+    # inside <script id="__NEXT_DATA__"> rather than in static HTML.
+    nextjs_result = _extract_nextjs_content(html)
+    if nextjs_result:
+        raw_content, nextjs_meta = nextjs_result
+        # Next.js JSON metadata is more authoritative than trafilatura's heuristics
+        if nextjs_meta.get('author'):
+            author = nextjs_meta['author']
+        if nextjs_meta.get('date'):
+            date = nextjs_meta['date']
+        if nextjs_meta.get('description'):
+            description = nextjs_meta['description']
+        if nextjs_meta.get('title'):
+            title = nextjs_meta['title']
 
-    # Remove boilerplate elements
-    for tag in soup.find_all(['script', 'style', 'nav', 'footer', 'aside',
-                              'header', 'form', 'iframe', 'noscript',
-                              'svg', 'button', 'input']):
-        tag.decompose()
+        # Detect content format: HTML vs markdown/plaintext
+        if re.search(r'<(?:p|h[1-6]|div|section|article|ul|ol|table)\b', raw_content):
+            # HTML content — run through the normal conversion pipeline
+            markdown, figures = _html_to_scholia_markdown(raw_content, base_url=url)
+        else:
+            # Markdown/plaintext — convert headings to [SECTION] markers
+            markdown = _markdown_to_scholia_format(raw_content)
+            figures = []
 
-    # Try to find the main content area
-    # Priority: article > main > [role=main] > .article > .content > .post > body
-    main_content = None
-    for selector in ['article', 'main', '[role="main"]', '.article-content',
-                     '.post-content', '.entry-content', '.article', '.content',
-                     '.post', '#content', '#main']:
-        main_content = soup.select_one(selector)
-        if main_content:
-            break
+    if not nextjs_result or not markdown.strip():
+        # ── Standard BeautifulSoup extraction ──
+        # Extract main content using BeautifulSoup
+        # trafilatura's HTML output strips headings, so we extract directly
+        soup = BeautifulSoup(html, 'html.parser')
 
-    if not main_content:
-        # Fallback: use body
-        main_content = soup.find('body')
-        if not main_content:
-            raise ValueError(f"Could not extract content from {url}")
-
-    # Additional cleanup on main content
-    for tag in main_content.find_all(['nav', 'footer', 'aside', 'form', 'button']):
-        tag.decompose()
-
-    # Remove common non-content classes
-    for cls in ['sidebar', 'comments', 'related', 'share', 'social', 'newsletter']:
-        for tag in main_content.find_all(class_=lambda x: x and cls in x.lower()):
+        # Remove boilerplate elements
+        for tag in soup.find_all(['script', 'style', 'nav', 'footer', 'aside',
+                                  'header', 'form', 'iframe', 'noscript',
+                                  'svg', 'button', 'input']):
             tag.decompose()
 
-    extracted_html = str(main_content)
+        # Try to find the main content area
+        # Priority: article > main > [role=main] > .article > .content > .post > body
+        main_content = None
+        for selector in ['article', 'main', '[role="main"]', '.article-content',
+                         '.post-content', '.entry-content', '.article', '.content',
+                         '.post', '#content', '#main']:
+            main_content = soup.select_one(selector)
+            if main_content:
+                break
 
-    # Convert HTML to Scholia markdown format
-    markdown, figures = _html_to_scholia_markdown(extracted_html, base_url=url)
+        if not main_content:
+            # Fallback: use body
+            main_content = soup.find('body')
+            if not main_content:
+                raise ValueError(f"Could not extract content from {url}")
 
-    if not markdown.strip():
-        raise ValueError(f"No content extracted from {url}")
+        # Additional cleanup on main content
+        for tag in main_content.find_all(['nav', 'footer', 'aside', 'form', 'button']):
+            tag.decompose()
+
+        # Remove common non-content classes
+        for cls in ['sidebar', 'comments', 'related', 'share', 'social', 'newsletter']:
+            for tag in main_content.find_all(class_=lambda x: x and cls in x.lower()):
+                tag.decompose()
+
+        extracted_html = str(main_content)
+
+        # Convert HTML to Scholia markdown format
+        markdown, figures = _html_to_scholia_markdown(extracted_html, base_url=url)
+
+        if not markdown.strip():
+            raise ValueError(f"No content extracted from {url}")
 
     # Build metadata dict
     meta_dict = {

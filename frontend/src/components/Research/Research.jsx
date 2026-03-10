@@ -170,126 +170,98 @@ export default function Research() {
         </div>
       </header>
 
-      {/* ─── Mobile Layout ─── */}
+      {/* Mobile: session list drawer (overlay, doesn't affect layout) */}
       {layout === 'mobile' && (
-        <>
-          <Drawer
-            isOpen={mobileDrawerOpen}
-            onClose={() => setMobileDrawerOpen(false)}
-            position="left"
-          >
-            {sessionListContent}
-          </Drawer>
-
-          <div className="flex-1 overflow-hidden pb-16">
-            {activeSessionId ? (
-              <SessionWorkspace
-                session={activeSession}
-                sessionId={activeSessionId}
-              />
-            ) : (
-              <MobileEmptyState onOpenSessions={() => setMobileDrawerOpen(true)} />
-            )}
-          </div>
-        </>
+        <Drawer
+          isOpen={mobileDrawerOpen}
+          onClose={() => setMobileDrawerOpen(false)}
+          position="left"
+        >
+          {sessionListContent}
+        </Drawer>
       )}
 
-      {/* ─── Tablet Layout ─── */}
-      {layout === 'tablet' && (
-        <div className="flex-1 flex overflow-hidden">
-          {/* Toggleable session list sidebar */}
-          {tabletSidebarVisible && (
-            <div className="flex-shrink-0 border-r border-subtle/50 overflow-hidden flex flex-col"
-              style={{ width: '35%' }}
+      {/* Main content — sidebar varies by layout, workspace never unmounts */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Desktop: sidebar + resize handle */}
+        {layout === 'desktop' && (
+          <>
+            <div
+              className="flex-shrink-0 border-r border-subtle/50 overflow-hidden flex flex-col"
+              style={{ width: widths.sessions }}
             >
               {sessionListContent}
             </div>
-          )}
-
-          {/* Workspace */}
-          <div className="flex-1 overflow-hidden">
-            {activeSessionId ? (
-              <SessionWorkspace
-                session={activeSession}
-                sessionId={activeSessionId}
-              />
-            ) : (
-              <EmptyState />
-            )}
-          </div>
-
-          {/* Floating toggle button when sidebar hidden */}
-          {!tabletSidebarVisible && (
-            <button
-              onClick={toggleTabletSidebar}
-              className="fixed bottom-20 right-4 z-30 w-11 h-11 rounded-full
-                         bg-surface border border-subtle shadow-lg
-                         flex items-center justify-center
-                         text-tertiary hover:text-camel hover:border-camel/40 transition-all"
-              title="Show sessions"
+            <div
+              onMouseDown={handleResizeStart}
+              className={`
+                group relative w-1 flex-shrink-0 cursor-col-resize
+                bg-subtle/50 hover:bg-camel/30 active:bg-camel/50
+                transition-colors duration-150
+                ${isResizing ? 'bg-camel/50' : ''}
+              `}
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
-              </svg>
-            </button>
-          )}
+              <div className="absolute top-1/2 -translate-y-1/2 -right-0.5 w-1 h-12 rounded-full bg-transparent group-hover:bg-camel/50 group-active:bg-camel transition-all duration-150" />
+            </div>
+          </>
+        )}
 
-          {/* Chevron toggle when sidebar visible */}
-          {tabletSidebarVisible && (
-            <button
-              onClick={toggleTabletSidebar}
-              className="absolute left-[35%] top-1/2 -translate-y-1/2 z-30
-                         w-5 h-10 -ml-2.5 rounded-r-md
-                         bg-surface border border-l-0 border-subtle
-                         flex items-center justify-center
-                         text-muted hover:text-camel transition-colors"
-              title="Hide sessions"
-            >
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* ─── Desktop Layout (unchanged) ─── */}
-      {layout === 'desktop' && (
-        <div className="flex-1 flex overflow-hidden">
-          {/* Left panel: Session list + Sources */}
-          <div
-            className="flex-shrink-0 border-r border-subtle/50 overflow-hidden flex flex-col"
-            style={{ width: widths.sessions }}
+        {/* Tablet: toggleable sidebar */}
+        {layout === 'tablet' && tabletSidebarVisible && (
+          <div className="flex-shrink-0 border-r border-subtle/50 overflow-hidden flex flex-col"
+            style={{ width: '35%' }}
           >
             {sessionListContent}
           </div>
+        )}
 
-          {/* Resize handle */}
-          <div
-            onMouseDown={handleResizeStart}
-            className={`
-              group relative w-1 flex-shrink-0 cursor-col-resize
-              bg-subtle/50 hover:bg-camel/30 active:bg-camel/50
-              transition-colors duration-150
-              ${isResizing ? 'bg-camel/50' : ''}
-            `}
-          >
-            <div className="absolute top-1/2 -translate-y-1/2 -right-0.5 w-1 h-12 rounded-full bg-transparent group-hover:bg-camel/50 group-active:bg-camel transition-all duration-150" />
-          </div>
-
-          {/* Right panel: Session workspace */}
-          <div className="flex-1 overflow-hidden">
-            {activeSessionId ? (
-              <SessionWorkspace
-                session={activeSession}
-                sessionId={activeSessionId}
-              />
-            ) : (
-              <EmptyState />
-            )}
-          </div>
+        {/* Workspace — rendered once, stable across layout changes */}
+        <div className={`flex-1 overflow-hidden ${layout === 'mobile' ? 'pb-16' : ''}`}>
+          {activeSessionId ? (
+            <SessionWorkspace
+              session={activeSession}
+              sessionId={activeSessionId}
+            />
+          ) : (
+            layout === 'mobile'
+              ? <MobileEmptyState onOpenSessions={() => setMobileDrawerOpen(true)} />
+              : <EmptyState />
+          )}
         </div>
-      )}
+
+        {/* Tablet: floating toggle when sidebar hidden */}
+        {layout === 'tablet' && !tabletSidebarVisible && (
+          <button
+            onClick={toggleTabletSidebar}
+            className="fixed bottom-20 right-4 z-30 w-11 h-11 rounded-full
+                       bg-surface border border-subtle shadow-lg
+                       flex items-center justify-center
+                       text-tertiary hover:text-camel hover:border-camel/40 transition-all"
+            title="Show sessions"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
+            </svg>
+          </button>
+        )}
+
+        {/* Tablet: chevron toggle when sidebar visible */}
+        {layout === 'tablet' && tabletSidebarVisible && (
+          <button
+            onClick={toggleTabletSidebar}
+            className="absolute left-[35%] top-1/2 -translate-y-1/2 z-30
+                       w-5 h-10 -ml-2.5 rounded-r-md
+                       bg-surface border border-l-0 border-subtle
+                       flex items-center justify-center
+                       text-muted hover:text-camel transition-colors"
+            title="Hide sessions"
+          >
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+        )}
+      </div>
     </div>
   )
 }

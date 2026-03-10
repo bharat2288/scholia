@@ -10,11 +10,10 @@ import { useState, useMemo, useRef, useCallback, useEffect } from 'react'
 import { useClipUrl, useClipTweet, useClipVideo, useTriageRepo, useClipRepo, usePreviewNote, useImportNote, useFindOrCreateTags, useFindOrCreatePeople, useAnalysisTypes } from '../../hooks/useApi'
 import { useChatModels } from '../../hooks/useChat'
 import { useQueryClient } from '@tanstack/react-query'
+import { API_BASE } from '../../config'
 import TagInput from './TagInput'
 import PersonInput from './PersonInput'
 import { MarkdownContent } from '../../utils/markdown'
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8200'
 
 // URL type detection patterns
 const URL_PATTERNS = {
@@ -108,6 +107,7 @@ function ClipUrlTab({ onClose, onSuccess }) {
   const [triageMode, setTriageMode] = useState(false) // triage vs direct read
   const [triageContent, setTriageContent] = useState(null) // Key Claims markdown for triage popup
   const [isDismissing, setIsDismissing] = useState(false)
+  const [runSummaryOnKeep, setRunSummaryOnKeep] = useState(true) // checkbox for Summary after triage Keep
   const eventSourceRef = useRef(null)
 
   const { data: analysisTypes } = useAnalysisTypes()
@@ -155,8 +155,9 @@ function ClipUrlTab({ onClose, onSuccess }) {
   }, [selectedFiles, triageResult])
 
   // Start SSE stream for video analysis after clip
-  const startAnalysisStream = useCallback((sourceId, isTriage = false) => {
-    const typesToRun = isTriage ? ['key_claims'] : selectedAnalyses
+  // typesOverride: explicit list of types (used by Keep → Summary flow)
+  const startAnalysisStream = useCallback((sourceId, isTriage = false, typesOverride = null) => {
+    const typesToRun = typesOverride || (isTriage ? ['key_claims'] : selectedAnalyses)
     if (typesToRun.length === 0) return
 
     setIsAnalyzing(true)
@@ -329,34 +330,23 @@ function ClipUrlTab({ onClose, onSuccess }) {
     setError(null)
   }
 
-  // Triage: Keep — source stays, auto-run Summary in background
+  // Triage: Keep — source stays, optionally run Summary before closing
   const handleTriageKeep = () => {
     const sourceId = successResult?.id
     if (!sourceId) return
 
-    // Fire-and-forget: run Summary analysis via background SSE
-    const sseUrl = `${API_BASE}/sources/${sourceId}/analyze/stream?types=summary&model=${analysisModel}`
-    const bgEs = new EventSource(sseUrl)
-    bgEs.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data)
-        if (data.stage === 'complete') {
-          bgEs.close()
-          // Invalidate so Reader picks up the new Summary
-          queryClient.invalidateQueries({ queryKey: ['sources', sourceId, 'analyses'] })
-          queryClient.invalidateQueries({ queryKey: ['reading', sourceId] })
-        }
-      } catch (err) {
-        if (!(err instanceof SyntaxError)) console.error('SSE handler error:', err)
-      }
+    if (runSummaryOnKeep) {
+      // Switch out of triage mode so the standard completion UI shows after Summary
+      setTriageMode(false)
+      startAnalysisStream(sourceId, false, ['summary'])
+    } else {
+      // No Summary — close immediately
+      queryClient.invalidateQueries({ queryKey: ['reading', sourceId] })
+      queryClient.invalidateQueries({ queryKey: ['sources', sourceId, 'analyses'] })
+      queryClient.invalidateQueries({ queryKey: ['sources'] })
+      onSuccess?.(successResult)
+      onClose()
     }
-    bgEs.onerror = () => bgEs.close()
-
-    queryClient.invalidateQueries({ queryKey: ['reading', sourceId] })
-    queryClient.invalidateQueries({ queryKey: ['sources', sourceId, 'analyses'] })
-    queryClient.invalidateQueries({ queryKey: ['sources'] })
-    onSuccess?.(successResult)
-    onClose()
   }
 
   // Triage: Dismiss — delete source + analyses
@@ -537,6 +527,15 @@ function ClipUrlTab({ onClose, onSuccess }) {
             </div>
           </div>
           <p className="text-xs text-muted text-center">Worth a deeper read?</p>
+          <label className="flex items-center gap-2 justify-center cursor-pointer py-1">
+            <input
+              type="checkbox"
+              checked={runSummaryOnKeep}
+              onChange={(e) => setRunSummaryOnKeep(e.target.checked)}
+              className="accent-camel w-3.5 h-3.5"
+            />
+            <span className="text-xs text-tertiary">Run Summary on keep</span>
+          </label>
           <div className="flex gap-3">
             <button
               type="button"
@@ -1162,7 +1161,7 @@ export default function AddSourceModal({ onClose, onSuccess }) {
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="bg-surface border border-raised rounded-xl p-6 max-w-md w-full shadow-2xl">
+      <div className="bg-surface border border-raised rounded-xl p-6 max-w-md w-full shadow-2xl max-h-[calc(100vh-2rem)] overflow-y-auto">
         <h2 className="font-display text-2xl text-primary mb-4">Add Source</h2>
 
         {/* Tab switcher */}
