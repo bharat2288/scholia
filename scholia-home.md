@@ -7,7 +7,7 @@ cssclasses:
 ---
 # Scholia
 *[[dev-hub|Hub]] · [[README|GitHub]]*
-<span class="hub-status">Impact Graph declaration complete — 65 nodes, 98 edges, 12 traced events with read-side propagation</span>
+<span class="hub-status">Bug fix sweep — RLM resize, Next.js clipper, mobile SSE, triage Keep Summary flow. Backend abort still needed.</span>
 
 Marginal notes and annotations system. OCR-processed documents, source ingestion, research sessions, WhatsApp integration.
 
