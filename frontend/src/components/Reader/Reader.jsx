@@ -22,7 +22,7 @@ import { API_BASE } from '../../config'
 import AutocompleteTextarea from '../common/AutocompleteTextarea'
 import YouTubePlayer from './YouTubePlayer'
 import ReadingContent from './ReadingContent'
-import { HIGHLIGHT_COLORS, DEFAULT_HIGHLIGHT_COLOR, cleanSectionTitle } from './readerUtils'
+import { HIGHLIGHT_COLORS, DEFAULT_HIGHLIGHT_COLOR, cleanSectionTitle, CopyIcon } from './readerUtils'
 
 // Hand-drawn squiggle underline element for Reader title
 function SquiggleSVG({ className = "" }) {
