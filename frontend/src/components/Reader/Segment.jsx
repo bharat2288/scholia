@@ -6,6 +6,7 @@
  * into segments and rendering each segment type.
  */
 import { Link } from 'react-router-dom'
+import DOMPurify from 'dompurify'
 import { API_BASE } from '../../config'
 import { slugify, cleanSectionTitle, CopyIcon } from './readerUtils'
 import { seekYouTubeVideo } from './YouTubePlayer'
@@ -464,7 +465,7 @@ export default function Segment({ segment, segmentIndex, highlights, highlightMa
         return (
           <div
             className="my-6 overflow-x-auto prose"
-            dangerouslySetInnerHTML={{ __html: segment.tableHtml }}
+            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(segment.tableHtml) }}
           />
         )
       }
