@@ -8,7 +8,7 @@ Uses the dots.ocr VLM model for structure-aware extraction.
 Ported from Lit Processor with Scholia storage integration.
 
 Requires:
-- dots.ocr package installed (C:/Users/bhara/dev/lit-processor/dots-ocr)
+- dots.ocr package installed (set DOTS_OCR_PATH env var, or peer at ../lit-processor/dots-ocr)
 - Model weights downloaded
 - CUDA-capable GPU (RTX 3070 Ti or better)
 
@@ -30,7 +30,9 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 # Add dots.ocr to path (located in lit-processor project)
-DOTS_OCR_PATH = Path("C:/Users/bhara/dev/lit-processor/dots-ocr")
+# Resolve via env var, or fall back to peer directory relative to project root
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+DOTS_OCR_PATH = Path(os.getenv("DOTS_OCR_PATH", _PROJECT_ROOT.parent / "lit-processor" / "dots-ocr"))
 if str(DOTS_OCR_PATH) not in sys.path:
     sys.path.insert(0, str(DOTS_OCR_PATH))
 
@@ -234,7 +236,7 @@ def extract_with_dots_ocr(
 
     if not DOTS_OCR_AVAILABLE:
         raise RuntimeError(
-            "dots.ocr is not installed. Ensure C:/Users/bhara/dev/lit-processor/dots-ocr exists and is set up."
+            f"dots.ocr is not installed. Ensure {DOTS_OCR_PATH} exists, or set DOTS_OCR_PATH env var."
         )
 
     if not is_available():
