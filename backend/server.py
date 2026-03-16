@@ -64,12 +64,16 @@ async def lifespan(app: FastAPI):
     await close_db()
 
 
-# Create FastAPI app
+# Create FastAPI app — disable docs unless DEBUG is set
+_debug = os.getenv("DEBUG", "").lower() in ("1", "true", "yes")
 app = FastAPI(
     title="Scholia",
     description="Local-first research knowledge system",
     version="0.1.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/docs" if _debug else None,
+    redoc_url="/redoc" if _debug else None,
+    openapi_url="/openapi.json" if _debug else None,
 )
 
 # Configure CORS for frontend
