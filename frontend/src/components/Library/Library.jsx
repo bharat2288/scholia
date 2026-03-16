@@ -26,12 +26,12 @@ function ConstellationSVG({ className = "" }) {
       fill="none"
       style={{ opacity: 0.45 }}
     >
-      <circle cx="22" cy="8" r="4" fill="#d4a574"/>
-      <circle cx="8" cy="35" r="3.5" fill="#d4a574"/>
-      <circle cx="36" cy="35" r="4" fill="#d4a574"/>
-      <path d="M22 12 Q19 21, 11 32" stroke="#d4a574" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
-      <path d="M22 12 Q25 21, 33 32" stroke="#d4a574" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
-      <path d="M12 35 Q22 37, 32 35" stroke="#d4a574" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+      <circle cx="22" cy="8" r="4" fill="currentColor"/>
+      <circle cx="8" cy="35" r="3.5" fill="currentColor"/>
+      <circle cx="36" cy="35" r="4" fill="currentColor"/>
+      <path d="M22 12 Q19 21, 11 32" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+      <path d="M22 12 Q25 21, 33 32" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+      <path d="M12 35 Q22 37, 32 35" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
     </svg>
   )
 }
@@ -756,8 +756,8 @@ const SOURCE_TYPE_STYLES = {
   },
   web: {
     label: 'Web',
-    bg: 'bg-[#d4a574]/20',  // camel at 20%
-    text: 'text-[#d4a574]'
+    bg: 'bg-camel/20',  // camel at 20%
+    text: 'text-camel'
   },
   thread: {
     label: '𝕏 Thread',

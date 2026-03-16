@@ -35,7 +35,7 @@ import PresetEditor from './PresetEditor'
 
 // Provider display info for Council
 const PROVIDER_DISPLAY = {
-  anthropic: { name: 'Claude', color: '#d4a574' },
+  anthropic: { name: 'Claude', color: '#d4a574' },  // Note: used as inline style value, must be hex
   openai: { name: 'GPT', color: '#10a37f' },
   openrouter: { name: 'Gemini', color: '#4285f4' },
 }

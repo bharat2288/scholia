@@ -37,7 +37,7 @@ function SquiggleSVG({ className = "" }) {
     >
       <path
         d="M2 6 Q 10 2, 18 6 T 34 6 T 50 6 T 66 6 T 78 6"
-        stroke="#d4a574"
+        stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"
         fill="none"

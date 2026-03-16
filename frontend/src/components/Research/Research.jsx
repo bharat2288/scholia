@@ -24,7 +24,7 @@ function ScrollSVG({ className = "" }) {
       {/* Scroll body */}
       <path
         d="M8 8 Q6 8, 6 12 L6 32 Q6 36, 10 36 L30 36 Q34 36, 34 32 L34 12 Q34 8, 30 8"
-        stroke="#d4a574"
+        stroke="currentColor"
         strokeWidth="1.5"
         strokeLinecap="round"
         fill="none"
@@ -32,15 +32,15 @@ function ScrollSVG({ className = "" }) {
       {/* Scroll top curl */}
       <path
         d="M8 8 Q8 4, 12 4 L28 4 Q32 4, 32 8"
-        stroke="#d4a574"
+        stroke="currentColor"
         strokeWidth="1.5"
         strokeLinecap="round"
         fill="none"
       />
       {/* Text lines */}
-      <path d="M12 14 L28 14" stroke="#d4a574" strokeWidth="1" strokeLinecap="round" />
-      <path d="M12 20 L24 20" stroke="#d4a574" strokeWidth="1" strokeLinecap="round" />
-      <path d="M12 26 L26 26" stroke="#d4a574" strokeWidth="1" strokeLinecap="round" />
+      <path d="M12 14 L28 14" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+      <path d="M12 20 L24 20" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+      <path d="M12 26 L26 26" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
     </svg>
   )
 }

@@ -23,8 +23,8 @@ function SparkSVG({ className = "" }) {
       fill="none"
       style={{ opacity: 0.45 }}
     >
-      <path d="M24 8 L24 40 M8 24 L40 24 M12 12 L36 36 M36 12 L12 36" stroke="#d4a574" strokeWidth="2" strokeLinecap="round"/>
-      <circle cx="24" cy="24" r="3" fill="#d4a574"/>
+      <path d="M24 8 L24 40 M8 24 L40 24 M12 12 L36 36 M36 12 L12 36" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+      <circle cx="24" cy="24" r="3" fill="currentColor"/>
     </svg>
   )
 }

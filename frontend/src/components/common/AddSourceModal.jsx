@@ -437,7 +437,7 @@ function ClipUrlTab({ onClose, onSuccess }) {
                     type="checkbox"
                     checked={selectedAnalyses.includes(at.type)}
                     onChange={() => toggleAnalysis(at.type)}
-                    className="accent-[#d4a574]"
+                    className="accent-camel"
                   />
                   <div>
                     <span className="text-sm text-primary">{at.display_name}</span>
@@ -690,7 +690,7 @@ function ClipUrlTab({ onClose, onSuccess }) {
                   type="checkbox"
                   checked={selectedFiles.has(file.path)}
                   onChange={() => toggleFile(file.path)}
-                  className="mt-0.5 accent-[#d4a574]"
+                  className="mt-0.5 accent-camel"
                 />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -732,7 +732,7 @@ function ClipUrlTab({ onClose, onSuccess }) {
                           type="checkbox"
                           checked={selectedFiles.has(path)}
                           onChange={() => toggleFile(path)}
-                          className="accent-[#d4a574]"
+                          className="accent-camel"
                         />
                         <span className="text-xs text-secondary font-mono truncate">{path}</span>
                       </label>

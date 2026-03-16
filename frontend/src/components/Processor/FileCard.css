@@ -5,7 +5,7 @@
   border-radius: 12px;
   border: 1px solid var(--bg-raised);
   overflow: hidden;
-  transition: border-color 0.2s ease;
+  transition: border-color var(--duration-normal) var(--ease-default);
 }
 
 .file-card:hover {
@@ -21,7 +21,7 @@
 }
 
 .file-card--queued {
-  border-left: 3px solid var(--accent-camel);
+  border-left: 3px solid var(--accent-primary);
 }
 
 /* Header */
@@ -83,7 +83,7 @@
   width: 16px;
   height: 16px;
   border: 2px solid var(--bg-elevated);
-  border-top-color: var(--accent-camel);
+  border-top-color: var(--accent-primary);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -116,7 +116,7 @@
   border: 1px solid var(--bg-raised);
   position: relative;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease-default);
 }
 
 .tier-btn:hover {
@@ -125,7 +125,7 @@
 }
 
 .tier-btn--selected {
-  border-color: var(--accent-camel);
+  border-color: var(--accent-primary);
   background: rgba(212, 165, 116, 0.1);
 }
 
@@ -147,7 +147,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  background: var(--accent-camel);
+  background: var(--accent-primary);
   color: var(--bg-base);
   padding: 2px 6px;
   border-radius: 10px;
@@ -176,7 +176,7 @@
 }
 
 .tier-btn--unconfigured .tier-time {
-  color: var(--accent-camel);
+  color: var(--accent-primary);
   text-decoration: underline;
 }
 
@@ -192,14 +192,14 @@
 
 /* Button styles */
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent-camel), var(--accent-terra));
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
   color: var(--bg-base);
   padding: 8px 16px;
   border-radius: 8px;
   font-weight: 600;
   border: none;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease-default);
 }
 
 .btn-primary:hover {
@@ -243,7 +243,7 @@
   border-radius: 8px;
   border: 1px solid var(--bg-elevated);
   text-decoration: none;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease-default);
 }
 
 .btn-library:hover {
@@ -289,15 +289,15 @@
 
 .progress-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--accent-camel), var(--accent-terra));
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
   border-radius: 3px;
-  transition: width 0.3s ease-out;
+  transition: width var(--duration-slow) var(--ease-default)-out;
 }
 
 /* Indeterminate progress bar for marker extraction (no per-page progress available) */
 .progress-bar-indeterminate {
   height: 100%;
-  background: linear-gradient(90deg, var(--accent-camel), var(--accent-terra));
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
   border-radius: 3px;
   width: 30%;
   animation: indeterminate 1.5s ease-in-out infinite;
@@ -355,7 +355,7 @@
   border-radius: 4px;
   border: 1px solid var(--bg-elevated);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease-default);
 }
 
 .btn-cancel:hover {
@@ -378,7 +378,7 @@
 }
 
 .queue-icon {
-  color: var(--accent-camel);
+  color: var(--accent-primary);
   display: flex;
   align-items: center;
 }
@@ -513,7 +513,7 @@
   font-weight: 600;
   border: none;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease-default);
 }
 
 .btn-danger:hover {
@@ -529,7 +529,7 @@
   font-weight: 500;
   border: 1px solid var(--bg-elevated);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease-default);
 }
 
 .btn-secondary:hover {
@@ -572,12 +572,12 @@
   padding: 8px 12px;
   color: var(--text-primary);
   font-size: 14px;
-  transition: border-color 0.2s ease;
+  transition: border-color var(--duration-normal) var(--ease-default);
 }
 
 .epub-field-input:focus {
   outline: none;
-  border-color: var(--accent-camel);
+  border-color: var(--accent-primary);
 }
 
 .epub-field-row {

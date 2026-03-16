@@ -21,10 +21,10 @@ const scholiaEditorTheme = EditorView.theme({
     fontSize: '14px',
     lineHeight: '1.625',
     padding: '16px',
-    caretColor: '#d4a574',
+    caretColor: 'var(--accent-primary)',
   },
   '&.cm-focused .cm-cursor': {
-    borderLeftColor: '#d4a574',
+    borderLeftColor: 'var(--accent-primary)',
     borderLeftWidth: '2px',
   },
   '.cm-gutters': {

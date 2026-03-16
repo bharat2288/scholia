@@ -22,7 +22,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--accent-camel, #d4a574);
+  color: var(--accent-primary);
 }
 
 .runpod-title svg {
@@ -80,7 +80,7 @@
 }
 
 .job-status.status--processing {
-  color: var(--accent-camel, #d4a574);
+  color: var(--accent-primary);
 }
 
 .job-status.status--ready {
@@ -113,7 +113,7 @@
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--duration-fast) var(--ease-default);
   border: none;
 }
 
@@ -180,7 +180,7 @@
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease-default);
 }
 
 .btn-finalize:hover:not(:disabled) {
@@ -218,13 +218,13 @@
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--duration-fast) var(--ease-default);
 }
 
 .btn-sync:hover:not(:disabled) {
   background: var(--bg-elevated, #323832);
   color: var(--text-primary, #fafafa);
-  border-color: var(--accent-camel, #d4a574);
+  border-color: var(--accent-primary);
 }
 
 .btn-sync:disabled {
@@ -252,15 +252,15 @@
   border-radius: 6px;
   color: var(--text-secondary, #a8a8a8);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--duration-fast) var(--ease-default);
   text-decoration: none;
 }
 
 .btn-browse:hover,
 .btn-configure:hover {
   background: var(--bg-elevated, #323832);
-  color: var(--accent-camel, #d4a574);
-  border-color: var(--accent-camel, #d4a574);
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
 }
 
 /* Empty state */
@@ -304,7 +304,7 @@
 .download-step {
   font-size: 12px;
   font-weight: 500;
-  color: var(--accent-camel, #d4a574);
+  color: var(--accent-primary);
 }
 
 .download-progress--error .download-step {
@@ -329,7 +329,7 @@
   height: 100%;
   background: linear-gradient(90deg, #4ade80, #22c55e);
   border-radius: 2px;
-  transition: width 0.3s ease;
+  transition: width var(--duration-slow) var(--ease-default);
 }
 
 .download-progress--error .download-progress-fill {

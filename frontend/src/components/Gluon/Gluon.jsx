@@ -29,17 +29,17 @@ function NodeSVG({ className = "" }) {
       style={{ opacity: 0.4 }}
     >
       {/* Central node */}
-      <circle cx="24" cy="24" r="6" stroke="#d4a574" strokeWidth="2" fill="none"/>
+      <circle cx="24" cy="24" r="6" stroke="currentColor" strokeWidth="2" fill="none"/>
       {/* Connection lines radiating out */}
-      <path d="M24 18 L24 6" stroke="#d4a574" strokeWidth="1.5" strokeLinecap="round"/>
-      <path d="M24 30 L24 42" stroke="#d4a574" strokeWidth="1.5" strokeLinecap="round"/>
-      <path d="M18 24 L6 24" stroke="#d4a574" strokeWidth="1.5" strokeLinecap="round"/>
-      <path d="M30 24 L42 24" stroke="#d4a574" strokeWidth="1.5" strokeLinecap="round"/>
+      <path d="M24 18 L24 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+      <path d="M24 30 L24 42" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+      <path d="M18 24 L6 24" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+      <path d="M30 24 L42 24" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
       {/* Small nodes at ends */}
-      <circle cx="24" cy="6" r="2" fill="#d4a574"/>
-      <circle cx="24" cy="42" r="2" fill="#d4a574"/>
-      <circle cx="6" cy="24" r="2" fill="#d4a574"/>
-      <circle cx="42" cy="24" r="2" fill="#d4a574"/>
+      <circle cx="24" cy="6" r="2" fill="currentColor"/>
+      <circle cx="24" cy="42" r="2" fill="currentColor"/>
+      <circle cx="6" cy="24" r="2" fill="currentColor"/>
+      <circle cx="42" cy="24" r="2" fill="currentColor"/>
     </svg>
   )
 }

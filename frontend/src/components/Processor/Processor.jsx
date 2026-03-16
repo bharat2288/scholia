@@ -667,7 +667,7 @@ function Processor() {
             {/* Back page - slightly rotated */}
             <path
               d="M10 8 L32 6 L34 34 L12 36 Z"
-              stroke="#d4a574"
+              stroke="currentColor"
               strokeWidth="1.5"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -676,7 +676,7 @@ function Processor() {
             {/* Middle page */}
             <path
               d="M8 10 L30 10 L30 38 L8 38 Z"
-              stroke="#d4a574"
+              stroke="currentColor"
               strokeWidth="1.5"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -685,16 +685,16 @@ function Processor() {
             {/* Front page with fold */}
             <path
               d="M6 12 L28 12 L28 40 L6 40 Z"
-              stroke="#cd8264"
+              stroke="currentColor"
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
               fill="none"
             />
             {/* Page lines - hand-drawn wavy */}
-            <path d="M10 20 Q14 19, 18 20 Q22 21, 24 20" stroke="#d4a574" strokeWidth="1" strokeLinecap="round" fill="none" opacity="0.7"/>
-            <path d="M10 26 Q15 27, 20 26 Q23 25, 24 26" stroke="#d4a574" strokeWidth="1" strokeLinecap="round" fill="none" opacity="0.7"/>
-            <path d="M10 32 Q13 31, 16 32" stroke="#d4a574" strokeWidth="1" strokeLinecap="round" fill="none" opacity="0.7"/>
+            <path d="M10 20 Q14 19, 18 20 Q22 21, 24 20" stroke="currentColor" strokeWidth="1" strokeLinecap="round" fill="none" opacity="0.7"/>
+            <path d="M10 26 Q15 27, 20 26 Q23 25, 24 26" stroke="currentColor" strokeWidth="1" strokeLinecap="round" fill="none" opacity="0.7"/>
+            <path d="M10 32 Q13 31, 16 32" stroke="currentColor" strokeWidth="1" strokeLinecap="round" fill="none" opacity="0.7"/>
           </svg>
         </h1>
         <p className="processor-subtitle">PDF &amp; EPUB extraction for academic literature</p>
