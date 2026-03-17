@@ -32,6 +32,7 @@ import asyncio
 
 from services.lit_engine.assessor import assess_pdf
 from database import get_db
+from services.index_generator import regenerate_scholia_index
 
 router = APIRouter()
 
@@ -334,6 +335,7 @@ def _sync_import_source(folder_name: str, tier: str):
         """, [source_id])
 
         conn.commit()
+        regenerate_scholia_index()
         return source_id
 
     except Exception as e:
@@ -1414,6 +1416,7 @@ def _sync_import_epub_source(folder_name: str, extraction_result: dict, epub_pat
         """, [source_id])
 
         conn.commit()
+        regenerate_scholia_index()
         return source_id
 
     except Exception as e:

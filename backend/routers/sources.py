@@ -30,9 +30,13 @@ from datetime import datetime
 
 from database import get_db
 from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
+import asyncio
 
 # AI metadata suggestion service
 from services.metadata_ai import suggest_metadata, format_suggestions_for_review
+
+# Source index regeneration (called after create/delete/update)
+from services.index_generator import regenerate_scholia_index
 
 logger = logging.getLogger(__name__)
 
@@ -543,6 +547,7 @@ async def import_processed(
     """, [source_id])
 
     await db.commit()
+    await asyncio.to_thread(regenerate_scholia_index)
 
     return {
         "id": source_id,
@@ -682,6 +687,7 @@ async def clip_url_endpoint(request: ClipUrlRequest):
     """, [source_id])
 
     await db.commit()
+    await asyncio.to_thread(regenerate_scholia_index)
 
     return {
         "id": source_id,
@@ -865,6 +871,7 @@ async def clip_tweet_endpoint(request: ClipTweetRequest):
     """, [source_id])
 
     await db.commit()
+    await asyncio.to_thread(regenerate_scholia_index)
 
     response = {
         "id": source_id,
@@ -1028,6 +1035,7 @@ async def clip_video_endpoint(request: ClipVideoRequest):
             ])
 
     await db.commit()
+    await asyncio.to_thread(regenerate_scholia_index)
 
     return {
         "id": source_id,
@@ -1247,6 +1255,7 @@ async def clip_repo_endpoint(request: ClipRepoRequest):
     """, [source_id])
 
     await db.commit()
+    await asyncio.to_thread(regenerate_scholia_index)
 
     return {
         "id": source_id,
@@ -1558,6 +1567,7 @@ async def import_note_endpoint(
     await _sync_source_gluon_links(db, source_id, source_metadata)
 
     await db.commit()
+    await asyncio.to_thread(regenerate_scholia_index)
 
     return {
         "id": source_id,
@@ -1634,6 +1644,7 @@ async def refresh_sources():
     all_errors.extend(note_results["errors"])
 
     await db.commit()
+    await asyncio.to_thread(regenerate_scholia_index)
 
     return {
         "imported_count": len(all_imported),
@@ -2452,6 +2463,7 @@ async def update_source(source_id: str, updates: dict):
     await _sync_source_gluon_links(db, source_id, current_metadata)
 
     await db.commit()
+    await asyncio.to_thread(regenerate_scholia_index)
 
     return await get_source(source_id)
 
@@ -2624,6 +2636,7 @@ async def delete_source(
     """)
 
     await db.commit()
+    await asyncio.to_thread(regenerate_scholia_index)
 
     # Delete local files if requested (non-document sources only)
     local_files_deleted = False
