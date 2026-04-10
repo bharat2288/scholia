@@ -28,6 +28,7 @@ Thumbs.db
 # Claude Code temp files
 tmpclaude-*
 .claude/settings.local.json
+.claude/*.bak
 
 # User data (SQLite databases, uploaded files, notes)
 data/
