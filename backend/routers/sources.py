@@ -183,6 +183,56 @@ def _get_documents_dir() -> Path:
     return DOCUMENTS_DIR
 
 
+def _find_available_document_methods(doc_folder: Path, priority_map: Optional[dict] = None) -> List[dict]:
+    """
+    Find extracted document variants for a folder.
+
+    We prefer the current supported methods first, then fall back to any legacy
+    extraction folders so existing data on disk remains discoverable.
+    """
+    folder_name = doc_folder.name
+    supported_methods = ("dots-ocr", "quick", "pymupdf", "tesseract")
+    candidates = []
+    seen_folders = set()
+
+    def add_candidate(method_folder: Path, extracted_file: Path, method: str) -> None:
+        resolved_folder = str(method_folder.resolve())
+        if resolved_folder in seen_folders:
+            return
+        seen_folders.add(resolved_folder)
+        candidates.append({
+            "method": method,
+            "path": str(extracted_file),
+            "priority": (priority_map or {}).get(method, 0),
+        })
+
+    for method in supported_methods:
+        method_folder = doc_folder / f"{folder_name}--{method}"
+        extracted_file = method_folder / f"{folder_name}--{method}--extracted.txt"
+        if extracted_file.exists():
+            add_candidate(method_folder, extracted_file, method)
+            continue
+
+        for method_folder in doc_folder.glob(f"*--{method}"):
+            if not method_folder.is_dir():
+                continue
+            extracted_matches = list(method_folder.glob(f"*--{method}--extracted.txt"))
+            if extracted_matches:
+                add_candidate(method_folder, extracted_matches[0], method)
+                break
+
+    for method_folder in doc_folder.glob("*--*"):
+        if not method_folder.is_dir():
+            continue
+        extracted_matches = list(method_folder.glob("*--*--extracted.txt"))
+        if not extracted_matches:
+            continue
+        method = method_folder.name.rsplit("--", 1)[-1]
+        add_candidate(method_folder, extracted_matches[0], method)
+
+    return candidates
+
+
 @router.get("")
 async def list_sources(
     source_type: Optional[str] = Query(None, description="Filter by source type: document, web, thread, media"),
@@ -429,21 +479,19 @@ async def scan_documents_folder():
 
         folder_name = doc_folder.name
 
-        # Find method subfolder (prefer dots-ocr, then marker, then pymupdf, then tesseract)
-        method_folder = None
-        method = None
-        for m in ["dots-ocr", "marker", "pymupdf", "tesseract"]:
-            mf = doc_folder / f"{folder_name}--{m}"
-            if mf.exists():
-                method_folder = mf
-                method = m
-                break
-
-        if not method_folder:
+        available_methods = _find_available_document_methods(
+            doc_folder,
+            {"tesseract": 1, "pymupdf": 2, "quick": 3, "dots-ocr": 4},
+        )
+        if not available_methods:
             continue
 
-        # Find extracted.txt
-        extracted_path = method_folder / f"{folder_name}--{method}--extracted.txt"
+        available_methods.sort(key=lambda item: item["priority"], reverse=True)
+        best_method = available_methods[0]
+        method = best_method["method"]
+        extracted_path = Path(best_method["path"])
+        method_folder = extracted_path.parent
+
         if not extracted_path.exists():
             continue
 
@@ -547,7 +595,10 @@ async def import_processed(
     """, [source_id])
 
     await db.commit()
-    await asyncio.to_thread(regenerate_scholia_index)
+    try:
+        await asyncio.to_thread(regenerate_scholia_index)
+    except Exception as e:
+        logger.warning(f"Index regeneration failed: {e}")
 
     return {
         "id": source_id,
@@ -687,7 +738,10 @@ async def clip_url_endpoint(request: ClipUrlRequest):
     """, [source_id])
 
     await db.commit()
-    await asyncio.to_thread(regenerate_scholia_index)
+    try:
+        await asyncio.to_thread(regenerate_scholia_index)
+    except Exception as e:
+        logger.warning(f"Index regeneration failed: {e}")
 
     return {
         "id": source_id,
@@ -871,7 +925,10 @@ async def clip_tweet_endpoint(request: ClipTweetRequest):
     """, [source_id])
 
     await db.commit()
-    await asyncio.to_thread(regenerate_scholia_index)
+    try:
+        await asyncio.to_thread(regenerate_scholia_index)
+    except Exception as e:
+        logger.warning(f"Index regeneration failed: {e}")
 
     response = {
         "id": source_id,
@@ -1035,7 +1092,10 @@ async def clip_video_endpoint(request: ClipVideoRequest):
             ])
 
     await db.commit()
-    await asyncio.to_thread(regenerate_scholia_index)
+    try:
+        await asyncio.to_thread(regenerate_scholia_index)
+    except Exception as e:
+        logger.warning(f"Index regeneration failed: {e}")
 
     return {
         "id": source_id,
@@ -1255,7 +1315,10 @@ async def clip_repo_endpoint(request: ClipRepoRequest):
     """, [source_id])
 
     await db.commit()
-    await asyncio.to_thread(regenerate_scholia_index)
+    try:
+        await asyncio.to_thread(regenerate_scholia_index)
+    except Exception as e:
+        logger.warning(f"Index regeneration failed: {e}")
 
     return {
         "id": source_id,
@@ -1567,7 +1630,10 @@ async def import_note_endpoint(
     await _sync_source_gluon_links(db, source_id, source_metadata)
 
     await db.commit()
-    await asyncio.to_thread(regenerate_scholia_index)
+    try:
+        await asyncio.to_thread(regenerate_scholia_index)
+    except Exception as e:
+        logger.warning(f"Index regeneration failed: {e}")
 
     return {
         "id": source_id,
@@ -1644,7 +1710,10 @@ async def refresh_sources():
     all_errors.extend(note_results["errors"])
 
     await db.commit()
-    await asyncio.to_thread(regenerate_scholia_index)
+    try:
+        await asyncio.to_thread(regenerate_scholia_index)
+    except Exception as e:
+        logger.warning(f"Index regeneration failed: {e}")
 
     return {
         "imported_count": len(all_imported),
@@ -1668,7 +1737,7 @@ async def _refresh_documents(db) -> dict:
     TIER_PRIORITY = {
         "tesseract": 1,
         "pymupdf": 2,
-        "marker": 3,
+        "quick": 3,
         "dots-ocr": 4,
     }
 
@@ -1706,30 +1775,9 @@ async def _refresh_documents(db) -> dict:
 
         folder_name = doc_folder.name
 
-        # Find all available extraction methods
-        available_methods = []
-        for method in ["dots-ocr", "marker", "pymupdf", "tesseract"]:
-            # First try exact match
-            method_folder = doc_folder / f"{folder_name}--{method}"
-            extracted_file = method_folder / f"{folder_name}--{method}--extracted.txt"
-            if extracted_file.exists():
-                available_methods.append({
-                    "method": method,
-                    "priority": TIER_PRIORITY.get(method, 0),
-                    "path": str(extracted_file)
-                })
-            else:
-                # Try glob for mismatched names (e.g., subfolder name differs from parent)
-                for method_folder in doc_folder.glob(f"*--{method}"):
-                    if method_folder.is_dir():
-                        for extracted_file in method_folder.glob(f"*--{method}--extracted.txt"):
-                            available_methods.append({
-                                "method": method,
-                                "priority": TIER_PRIORITY.get(method, 0),
-                                "path": str(extracted_file)
-                            })
-                            break  # Take first match
-                        break  # Take first matching folder
+        # Find all available extraction methods, preferring current supported paths
+        # while still allowing legacy folders to be re-imported if they exist.
+        available_methods = _find_available_document_methods(doc_folder, TIER_PRIORITY)
 
         if not available_methods:
             continue
@@ -2463,7 +2511,10 @@ async def update_source(source_id: str, updates: dict):
     await _sync_source_gluon_links(db, source_id, current_metadata)
 
     await db.commit()
-    await asyncio.to_thread(regenerate_scholia_index)
+    try:
+        await asyncio.to_thread(regenerate_scholia_index)
+    except Exception as e:
+        logger.warning(f"Index regeneration failed: {e}")
 
     return await get_source(source_id)
 
@@ -2636,7 +2687,10 @@ async def delete_source(
     """)
 
     await db.commit()
-    await asyncio.to_thread(regenerate_scholia_index)
+    try:
+        await asyncio.to_thread(regenerate_scholia_index)
+    except Exception as e:
+        logger.warning(f"Index regeneration failed: {e}")
 
     # Delete local files if requested (non-document sources only)
     local_files_deleted = False
@@ -2676,11 +2730,16 @@ def _parse_sections(content: str, source_id: str) -> list:
     sections = []
 
     # Find all section markers
-    # Format: [SECTION] ## Heading or [SECTION] # Heading
-    pattern = r"\[SECTION\]\s*(#{1,6})\s*(.+?)(?=\n)"
+    # Accept both heading-style markers and bare section labels emitted by some
+    # OCR/rebuild paths:
+    #   [SECTION] ## Heading
+    #   [SECTION] # Heading
+    #   [SECTION] Heading
+    pattern = r"\[SECTION\]\s*(#{1,6})?\s*(.+?)(?=\n)"
 
     for match in re.finditer(pattern, content):
-        level = len(match.group(1))  # Count # symbols
+        hashes = match.group(1) or ""
+        level = len(hashes) if hashes else 1
         title = match.group(2).strip()
         start_offset = match.start()
 

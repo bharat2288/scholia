@@ -1,7 +1,7 @@
 """
 Source Index Generator
 ======================
-Generates specs/scholia-index.md from the sources table.
+Generates specs/index.md from the sources table.
 
 Called after source create, delete, and metadata update operations.
 Uses synchronous sqlite3 (works in both async and sync contexts).
@@ -23,21 +23,22 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 DB_PATH = DATA_DIR / "library.db"
 SPECS_DIR = PROJECT_ROOT / "specs"
-INDEX_PATH = SPECS_DIR / "scholia-index.md"
+INDEX_PATH = SPECS_DIR / "index.md"
 
 
 def regenerate_scholia_index() -> int:
     """
-    Regenerate specs/scholia-index.md from the sources table.
+    Regenerate specs/index.md from the sources table.
 
     Opens its own sqlite3 connection (sync) so it can be called from:
     - sources.py (async): await asyncio.to_thread(regenerate_scholia_index)
     - processor.py (sync): regenerate_scholia_index()
 
-    Returns the number of sources indexed.
+    Returns the number of sources indexed. Raises on failure so callers
+    can surface the error rather than swallowing it silently.
     """
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=10)
         conn.row_factory = sqlite3.Row
         cursor = conn.execute("""
             SELECT id, title, source_type, author_display, url,
@@ -49,7 +50,7 @@ def regenerate_scholia_index() -> int:
         conn.close()
     except Exception as e:
         logger.error(f"Failed to query sources for index: {e}")
-        return 0
+        raise
 
     # Group by source_type
     groups: dict[str, list] = {}
@@ -63,7 +64,7 @@ def regenerate_scholia_index() -> int:
 
     lines = [
         "---",
-        "type: registry",
+        "type: reference",
         "project: scholia",
         f"date: {datetime.now().strftime('%Y-%m-%d')}",
         "created_by: auto",
@@ -143,9 +144,9 @@ def regenerate_scholia_index() -> int:
     try:
         SPECS_DIR.mkdir(parents=True, exist_ok=True)
         INDEX_PATH.write_text(content, encoding="utf-8")
-        logger.info(f"Regenerated scholia-index.md: {total} sources")
+        logger.info(f"Regenerated index.md: {total} sources")
     except Exception as e:
-        logger.error(f"Failed to write scholia-index.md: {e}")
-        return 0
+        logger.error(f"Failed to write index.md: {e}")
+        raise
 
     return total

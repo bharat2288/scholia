@@ -19,6 +19,7 @@ Endpoints:
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pathlib import Path
+import os
 import shutil
 import uuid
 import threading
@@ -31,6 +32,10 @@ from datetime import datetime
 import asyncio
 
 from services.lit_engine.assessor import assess_pdf
+from services.lit_engine.document_naming import (
+    generate_document_folder_name,
+    predict_document_folder_name,
+)
 from database import get_db
 from services.index_generator import regenerate_scholia_index
 
@@ -61,8 +66,10 @@ def _get_documents_dir() -> Path:
 # Key: temp_id, Value: {current_page, total_pages, status, stage, error, queue_position}
 progress_store: Dict[str, Dict[str, Any]] = {}
 
-# Unified processing queue - all jobs (marker + dots-ocr) run sequentially
-# Both use GPU, so we process one at a time to avoid memory conflicts
+ACTIVE_EXTRACTION_METHODS = ("dots-ocr", "quick")
+
+# Unified processing queue - all PDF jobs run sequentially.
+# dots-ocr is remote now, but we keep a single queue to preserve Processor UX.
 @dataclass
 class ProcessingJob:
     temp_id: str
@@ -72,6 +79,15 @@ class ProcessingJob:
 processing_queue: queue.Queue[ProcessingJob] = queue.Queue()
 processing_worker_thread: Optional[threading.Thread] = None
 processing_worker_running = False
+
+
+def _normalize_processing_tier(tier: Optional[str]) -> str:
+    """Map legacy marker jobs onto the supported local/remote tiers."""
+    if tier == "marker":
+        return "quick"
+    if tier in ACTIVE_EXTRACTION_METHODS:
+        return tier
+    return "dots-ocr"
 
 
 # =============================================================================
@@ -174,15 +190,16 @@ def _sync_import_source(folder_name: str, tier: str):
     Uses UPSERT logic: if source with same original_path exists, update it.
     This allows reprocessing to update the database entry rather than create duplicates.
 
-    Tier priority: dots-ocr > marker (dots-ocr is higher quality)
-    - If existing source uses dots-ocr and we just processed marker, DON'T downgrade
-    - If existing source uses marker and we just processed dots-ocr, DO upgrade
+    Tier priority: dots-ocr > quick (dots-ocr is higher fidelity)
+    - If existing source uses dots-ocr and we just processed quick, DON'T downgrade
+    - If existing source uses quick and we just processed dots-ocr, DO upgrade
     """
     import sqlite3
+    from routers.sources import _parse_sections
 
     # Tier priority: higher number = higher priority
     TIER_PRIORITY = {
-        "marker": 1,
+        "quick": 1,
         "dots-ocr": 2,
     }
 
@@ -239,8 +256,8 @@ def _sync_import_source(folder_name: str, tier: str):
             "pdf_hash": pdf_hash,
         }
 
-        # Check if source already exists by original_path in metadata
-        # This is stable across extraction methods (marker vs dots-ocr)
+        # Check if source already exists by original_path in metadata.
+        # This is stable across extraction methods (quick vs dots-ocr).
         cursor.execute("""
             SELECT id, content_path, metadata FROM sources
             WHERE json_extract(metadata, '$.original_path') = ?
@@ -305,17 +322,10 @@ def _sync_import_source(folder_name: str, tier: str):
             ])
             print(f"Auto-imported source: {folder_name} (id: {source_id})")
 
-        # Parse and insert sections (simple version - just find [SECTION] markers)
-        sections = []
-        for match in re.finditer(r'\[SECTION\]\s*(#{1,6})\s*(.+)', content):
-            level = len(match.group(1))
-            section_title = match.group(2).strip()
-            sections.append({
-                "title": section_title,
-                "level": level,
-                "start_offset": match.start(),
-                "end_offset": match.end()
-            })
+        # Reuse the canonical source parser so Processor imports match the rest of
+        # Scholia, including the "Full Document" fallback when OCR yields little
+        # explicit heading structure.
+        sections = _parse_sections(content, source_id)
 
         for i, section in enumerate(sections):
             section_id = f"{source_id}-s{i}"
@@ -335,7 +345,10 @@ def _sync_import_source(folder_name: str, tier: str):
         """, [source_id])
 
         conn.commit()
-        regenerate_scholia_index()
+        try:
+            regenerate_scholia_index()
+        except Exception as idx_err:
+            print(f"Warning: index regeneration failed: {idx_err}")
         return source_id
 
     except Exception as e:
@@ -367,11 +380,19 @@ def load_job_state(save_dir: Path) -> Optional[Dict[str, Any]]:
 
 
 def save_job_state(save_dir: Path, state: Dict[str, Any]):
-    """Save job state to disk."""
+    """Save job state to disk without discarding existing remote resume fields."""
     state_path = get_job_state_path(save_dir)
     try:
-        with open(state_path, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2)
+        existing_state = load_job_state(save_dir) or {}
+        merged_state = {
+            **existing_state,
+            **state,
+            "updated_at": datetime.now().isoformat(),
+        }
+        temp_path = state_path.with_suffix(".json.tmp")
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(merged_state, f, indent=2)
+        temp_path.replace(state_path)
     except IOError as e:
         print(f"Warning: Could not save job state: {e}")
 
@@ -388,7 +409,7 @@ def delete_job_state(save_dir: Path):
 
 
 # =============================================================================
-# Processing Worker (unified queue for marker + dots-ocr)
+# Processing Worker
 # =============================================================================
 
 def get_queue_position(temp_id: str) -> int:
@@ -419,7 +440,7 @@ def update_queue_positions():
 
 
 def processing_worker():
-    """Worker thread that processes all PDF jobs one at a time (both marker and dots-ocr use GPU)."""
+    """Worker thread that processes all PDF jobs one at a time."""
     global processing_worker_running
 
     while processing_worker_running:
@@ -478,7 +499,7 @@ def start_processing_worker():
                 if pdf_path.exists():
                     processing_queue.put(ProcessingJob(
                         temp_id=temp_id,
-                        tier=job_data.get("tier", "marker"),
+                        tier=_normalize_processing_tier(job_data.get("tier")),
                         pdf_path=pdf_path
                     ))
                     print(f"Restored job from DB: {temp_id}")
@@ -527,28 +548,21 @@ def process_pdf_sync(temp_id: str, tier: str, pdf_path: Path):
             _sync_save_job(temp_id, progress_store[temp_id])
             content = extract_with_quick(str(pdf_path), temp_id, progress_store)
 
-        elif tier == "marker":
-            from services.lit_engine.marker_extractor import (
-                extract_with_marker,
-                generate_document_folder_name
-            )
-            progress_store[temp_id]["stage"] = "extracting"
-            _sync_save_job(temp_id, progress_store[temp_id])
-            content = extract_with_marker(str(pdf_path), temp_id, progress_store)
-
         elif tier == "dots-ocr":
             from services.lit_engine.dots_ocr_extractor import (
-                extract_with_dots_ocr,
-                generate_document_folder_name as dots_generate_folder_name,
-                is_available as dots_available
+                extract_with_dots_ocr_remote,
+                is_remote_available,
             )
 
-            if not dots_available():
+            bhaforge_url = os.getenv("BHAFORGE_OCR_URL")
+            if not bhaforge_url:
                 raise RuntimeError(
-                    "dots-ocr is not available. Check that dots.ocr is installed and model weights are present."
+                    "dots-ocr now requires the bhaforge OCR service. Set BHAFORGE_OCR_URL to enable it."
                 )
+            if not is_remote_available(bhaforge_url):
+                raise RuntimeError(f"bhaforge OCR service is unreachable at {bhaforge_url}.")
 
-            progress_store[temp_id]["stage"] = "loading model"
+            progress_store[temp_id]["stage"] = "connecting remote"
             _sync_save_job(temp_id, progress_store[temp_id])
 
             # Generate folder name early so we can write intermediate files
@@ -565,12 +579,30 @@ def process_pdf_sync(temp_id: str, tier: str, pdf_path: Path):
             if not pdf_dest.exists():
                 shutil.copy2(pdf_path, pdf_dest)
 
-            content = extract_with_dots_ocr(
+            save_job_state(
+                method_folder,
+                {
+                    "temp_id": temp_id,
+                    "tier": tier,
+                    "filename": pdf_path.name,
+                    "pdf_path": str(pdf_path),
+                    "folder_name": folder_name,
+                    "service_url": bhaforge_url,
+                    "status": "processing",
+                    "stage": progress_store[temp_id]["stage"],
+                    "current_page": progress_store[temp_id].get("current_page", 0),
+                    "total_pages": progress_store[temp_id].get("total_pages", 0),
+                    "percent": progress_store[temp_id].get("percent", 0),
+                },
+            )
+
+            content = extract_with_dots_ocr_remote(
                 str(pdf_path),
                 temp_id,
                 progress_store,
                 output_dir=method_folder,
-                save_name=folder_name
+                save_name=folder_name,
+                service_url=bhaforge_url,
             )
 
         else:
@@ -584,7 +616,6 @@ def process_pdf_sync(temp_id: str, tier: str, pdf_path: Path):
         # For dots-ocr, folder_name/doc_folder/method_folder were created upfront
         # so intermediate files land in the final location. Other tiers create them here.
         if tier != "dots-ocr":
-            from services.lit_engine.marker_extractor import generate_document_folder_name
             folder_name = generate_document_folder_name(str(pdf_path), content)
 
             documents_dir = _get_documents_dir()
@@ -651,6 +682,15 @@ def process_pdf_sync(temp_id: str, tier: str, pdf_path: Path):
         # Note: dots-ocr intermediate files (page .md/.jpg/.json) are kept
         # in the method folder — no temp directory cleanup needed
 
+    except InterruptedError:
+        progress_store[temp_id] = {
+            **progress_store.get(temp_id, {}),
+            "status": "cancelled",
+            "stage": "cancelled",
+            "error": None,
+            "queue_position": None
+        }
+        _sync_save_job(temp_id, progress_store[temp_id])
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -673,61 +713,8 @@ def _predict_folder_name_from_filename(filename: str) -> str:
     """
     Predict the document folder name from just the PDF filename.
     This is used during assessment to check for existing extractions.
-
-    Uses the same logic as generate_document_folder_name but without content.
     """
-    from unidecode import unidecode
-
-    pdf_name = Path(filename).stem
-
-    # Strip temp_id prefix if present (format: "xxxxxxxx_originalname")
-    if re.match(r'^[a-f0-9]{8}_', pdf_name):
-        pdf_name = pdf_name[9:]
-
-    # Try to parse from common filename patterns
-    patterns = [
-        r'^(.+?)\s*[-_]\s*(\d{4})\s*[-_]\s*(.+)$',  # Author - 2023 - Title
-        r'^(.+?)\s*\((\d{4})\)\s*(.+)$',             # Author (2023) Title
-        r'^(\d{4})\s*[-_]\s*(.+?)\s*[-_]\s*(.+)$',  # 2023 - Author - Title
-        r'^(.+?)_(\d{4})_(.+)$',                     # Author_2023_Title
-    ]
-
-    author = "Unknown"
-    year = "XXXX"
-    title = pdf_name
-
-    for pattern in patterns:
-        match = re.match(pattern, pdf_name)
-        if match:
-            groups = match.groups()
-            if len(groups) == 3:
-                if groups[1].isdigit() and len(groups[1]) == 4:
-                    author = groups[0]
-                    year = groups[1]
-                    title = groups[2]
-                elif groups[0].isdigit() and len(groups[0]) == 4:
-                    year = groups[0]
-                    author = groups[1]
-                    title = groups[2]
-                break
-
-    # Clean up for filename
-    def clean_for_filename(text):
-        text = unidecode(text)
-        text = re.sub(r'[^\w\s-]', '', text)
-        text = re.sub(r'[-\s]+', '_', text)
-        text = text.strip('_')
-        text = '_'.join(word.capitalize() for word in text.split('_'))
-        return text
-
-    author = clean_for_filename(author)
-    title = clean_for_filename(title)
-
-    # Truncate title if too long
-    if len(title) > 50:
-        title = title[:50].rsplit('_', 1)[0]
-
-    return f"{author}_{year}_{title}"
+    return predict_document_folder_name(filename)
 
 
 def _parse_author_year_from_filename(filename: str) -> tuple:
@@ -778,7 +765,7 @@ def _check_existing_extractions(filename: str, pdf_path: str = None) -> dict:
         {
             "folder_name": str or None - predicted folder name,
             "folder_exists": bool - if predicted folder exists,
-            "existing_methods": ["marker", "dots-ocr"] - list of existing extractions,
+            "existing_methods": ["quick", "dots-ocr"] - list of existing extractions,
             "source_id": str or None - ID of existing source in database,
             "annotation_count": int - number of highlights/notes on this source,
             "match_type": "exact" | "folder" | "fuzzy" | None - how the match was found,
@@ -833,7 +820,7 @@ def _check_existing_extractions(filename: str, pdf_path: str = None) -> dict:
 
                             # Check existing methods
                             folder = orig_path.parent
-                            for method in ["marker", "dots-ocr"]:
+                            for method in ["dots-ocr", "quick"]:
                                 method_file = folder / f"{folder.name}--{method}" / f"{folder.name}--{method}--extracted.txt"
                                 if method_file.exists():
                                     result["existing_methods"].append(method)
@@ -858,10 +845,10 @@ def _check_existing_extractions(filename: str, pdf_path: str = None) -> dict:
             result["folder_exists"] = True
             result["match_type"] = "folder"
 
-            # Check for marker extraction
-            marker_file = doc_folder / f"{folder_name}--marker" / f"{folder_name}--marker--extracted.txt"
-            if marker_file.exists():
-                result["existing_methods"].append("marker")
+            # Check for quick extraction
+            quick_file = doc_folder / f"{folder_name}--quick" / f"{folder_name}--quick--extracted.txt"
+            if quick_file.exists():
+                result["existing_methods"].append("quick")
 
             # Check for dots-ocr extraction
             dots_file = doc_folder / f"{folder_name}--dots-ocr" / f"{folder_name}--dots-ocr--extracted.txt"
@@ -927,7 +914,7 @@ def _check_existing_extractions(filename: str, pdf_path: str = None) -> dict:
 
                             # Check existing methods
                             folder = orig_path.parent
-                            for method in ["marker", "dots-ocr"]:
+                            for method in ["dots-ocr", "quick"]:
                                 method_file = folder / f"{folder.name}--{method}" / f"{folder.name}--{method}--extracted.txt"
                                 if method_file.exists():
                                     result["existing_methods"].append(method)
@@ -970,7 +957,7 @@ async def assess(file: UploadFile = File(...)):
     Upload and assess a PDF to recommend extraction tier.
 
     Returns:
-        recommendation: "marker" | "dots-ocr"
+        recommendation: "quick" | "dots-ocr"
         page_count: int
         time_estimates: dict with estimates per tier
         signals: dict with detection signals
@@ -1017,11 +1004,11 @@ async def process(temp_id: str, tier: str, background_tasks: BackgroundTasks):
 
     Args:
         temp_id: The temp_id returned from /assess
-        tier: "marker" | "dots-ocr"
+        tier: "quick" | "dots-ocr"
 
     Returns:
         status: "started" | "queued"
-        queue_position: int (only for dots-ocr)
+        queue_position: int
     """
     # Ensure processing worker is running
     start_processing_worker()
@@ -1034,7 +1021,7 @@ async def process(temp_id: str, tier: str, background_tasks: BackgroundTasks):
     pdf_path = matches[0]
     filename = pdf_path.name[9:]  # Remove temp_id prefix
 
-    if tier not in ["quick", "marker", "dots-ocr"]:
+    if tier not in ACTIVE_EXTRACTION_METHODS:
         raise HTTPException(status_code=400, detail=f"Unknown tier: {tier}")
 
     # Create initial job state
@@ -1051,7 +1038,7 @@ async def process(temp_id: str, tier: str, background_tasks: BackgroundTasks):
         "tier": tier,
     }
 
-    # All jobs go through unified queue (both marker and dots-ocr use GPU)
+    # All jobs go through the unified queue for consistent Processor UX.
     queue_position = processing_queue.qsize() + 1
 
     # Check if something is currently processing
@@ -1142,9 +1129,14 @@ async def list_resumable_jobs():
     for pdf_path in UPLOAD_DIR.glob("*.pdf"):
         filename = pdf_path.name
         temp_id = filename.split("_")[0] if "_" in filename else filename[:8]
-
-        # Check if there's a job_state.json in any potential output location
-        # For dots-ocr, state would be saved per-job
+        resume_state = None
+        try:
+            original_filename = filename[9:] if filename.startswith(f"{temp_id}_") else filename
+            folder_name = _predict_folder_name_from_filename(original_filename)
+            method_folder = _get_documents_dir() / folder_name / f"{folder_name}--dots-ocr"
+            resume_state = load_job_state(method_folder)
+        except Exception:
+            resume_state = None
 
         # For now, just list PDFs that aren't currently being processed
         if temp_id not in progress_store or progress_store[temp_id].get("status") in ["error", "cancelled"]:
@@ -1154,13 +1146,19 @@ async def list_resumable_jobs():
                 page_count = len(doc)
                 doc.close()
 
+                completed_pages = int((resume_state or {}).get("current_page") or 0)
+                total_pages = int((resume_state or {}).get("total_pages") or 0) or page_count
+                percent_complete = int((resume_state or {}).get("percent") or 0)
+
                 resumable.append({
                     "temp_id": temp_id,
                     "filename": filename,
-                    "total_pages": page_count,
-                    "completed_pages": 0,
-                    "remaining_pages": page_count,
-                    "percent_complete": 0
+                    "total_pages": total_pages,
+                    "completed_pages": completed_pages,
+                    "remaining_pages": max(total_pages - completed_pages, 0),
+                    "percent_complete": percent_complete,
+                    "stage": (resume_state or {}).get("stage"),
+                    "remote_job_id": (resume_state or {}).get("remote_job_id"),
                 })
             except Exception:
                 pass
@@ -1169,10 +1167,12 @@ async def list_resumable_jobs():
 
 
 @router.post("/resume/{temp_id}")
-async def resume_job(temp_id: str, tier: str = "marker", background_tasks: BackgroundTasks = None):
+async def resume_job(temp_id: str, tier: str = "dots-ocr", background_tasks: BackgroundTasks = None):
     """
     Resume a previously interrupted job.
     """
+    tier = _normalize_processing_tier(tier)
+
     # Find the PDF file
     matches = list(UPLOAD_DIR.glob(f"{temp_id}_*.pdf"))
     if not matches:
@@ -1180,14 +1180,17 @@ async def resume_job(temp_id: str, tier: str = "marker", background_tasks: Backg
 
     pdf_path = matches[0]
     filename = pdf_path.name[9:]  # Remove temp_id prefix
+    folder_name = _predict_folder_name_from_filename(filename)
+    method_folder = _get_documents_dir() / folder_name / f"{folder_name}--{tier}"
+    resume_state = load_job_state(method_folder) if method_folder.exists() else None
 
     # Create job state
     job_data = {
         "status": "queued",
-        "stage": "waiting (resume)",
-        "current_page": 0,
-        "total_pages": 0,
-        "percent": 0,
+        "stage": (resume_state or {}).get("stage") or "waiting (resume)",
+        "current_page": int((resume_state or {}).get("current_page") or 0),
+        "total_pages": int((resume_state or {}).get("total_pages") or 0),
+        "percent": int((resume_state or {}).get("percent") or 0),
         "error": None,
         "queue_position": 1,
         "filename": filename,
@@ -1416,7 +1419,10 @@ def _sync_import_epub_source(folder_name: str, extraction_result: dict, epub_pat
         """, [source_id])
 
         conn.commit()
-        regenerate_scholia_index()
+        try:
+            regenerate_scholia_index()
+        except Exception as idx_err:
+            print(f"Warning: index regeneration failed: {idx_err}")
         return source_id
 
     except Exception as e:

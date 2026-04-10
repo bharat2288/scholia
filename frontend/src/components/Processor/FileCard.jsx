@@ -4,7 +4,6 @@ import './FileCard.css'
 
 const TIERS = [
   { id: 'quick', label: 'Quick', desc: 'Text-only (~2s)' },
-  { id: 'marker', label: 'Marker', desc: 'Layout-aware' },
   { id: 'dots-ocr', label: 'dots-ocr', desc: 'Scanned, equations' },
   { id: 'runpod', label: 'RunPod', desc: 'Cloud GPU (batch)', isRemote: true }
 ]

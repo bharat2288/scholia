@@ -294,7 +294,7 @@
   transition: width var(--duration-slow) var(--ease-default)-out;
 }
 
-/* Indeterminate progress bar for marker extraction (no per-page progress available) */
+/* Indeterminate progress bar for any non-granular extraction stage */
 .progress-bar-indeterminate {
   height: 100%;
   background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));

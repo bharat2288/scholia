@@ -7,7 +7,7 @@ cssclasses:
 ---
 # Scholia
 *[[dev-hub|Hub]] · [[README|GitHub]]*
-<span class="hub-status">Bug fix sweep — RLM resize, Next.js clipper, mobile SSE, triage Keep Summary flow. Backend abort still needed.</span>
+<span class="hub-status">Bhaforge OCR is deployed and validated end-to-end with restart-safe resume. Next: capture OCR metrics/history and clean up the default 8200 backend path.</span>
 
 Marginal notes and annotations system. OCR-processed documents, source ingestion, research sessions, WhatsApp integration.
 
@@ -18,7 +18,7 @@ Marginal notes and annotations system. OCR-processed documents, source ingestion
 ```base
 filters:
   and:
-    - file.folder.contains("scholia/specs")
+    - file.folder.contains("specs/scholia")
     - type != "spec-prompts"
 properties:
   "0":
@@ -51,49 +51,6 @@ views:
         direction: ASC
 ```
 
-> [!warning]- Open Errors (`$= dv.pages('"knowledge/exports/errors"').where(p => p.project == "scholia" && !p.resolved).length`)
-> ```dataview
-> TABLE module, date
-> FROM "knowledge/exports/errors"
-> WHERE project = "scholia" AND resolved = false
-> SORT date DESC
-> LIMIT 5
-> ```
-
-> [!info]- Decisions (`$= dv.pages('"knowledge/exports/decisions"').where(p => p.project == "scholia").length`)
-> ```dataview
-> TABLE date
-> FROM "knowledge/exports/decisions"
-> WHERE project = "scholia"
-> SORT date DESC
-> LIMIT 5
-> ```
->
-> > [!info]- All Decisions
-> > ```dataview
-> > TABLE date
-> > FROM "knowledge/exports/decisions"
-> > WHERE project = "scholia"
-> > SORT date DESC
-> > ```
-
-> [!tip]- Learnings (`$= dv.pages('"knowledge/exports/learnings"').where(p => p.project == "scholia").length`)
-> ```dataview
-> TABLE tags
-> FROM "knowledge/exports/learnings"
-> WHERE project = "scholia"
-> SORT date DESC
-> LIMIT 5
-> ```
->
-> > [!tip]- All Learnings
-> > ```dataview
-> > TABLE tags
-> > FROM "knowledge/exports/learnings"
-> > WHERE project = "scholia"
-> > SORT date DESC
-> > ```
-
 > [!abstract]- Project Plans (`$= dv.pages('"knowledge/plans"').where(p => p.project == "scholia").length`)
 > ```dataview
 > TABLE title, default(date, file.ctime) as Date
@@ -116,3 +73,4 @@ views:
 > > FROM "knowledge/sessions/scholia"
 > > SORT file.mtime DESC
 > > ```
+

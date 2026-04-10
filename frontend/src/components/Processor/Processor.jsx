@@ -10,6 +10,11 @@ import './Processor.css'
 const STORAGE_KEY = 'scholia-processor-jobs'
 const RUNPOD_POLL_INTERVAL = 120000 // 2 minutes
 
+const normalizeProcessorTier = (tier) => {
+  if (tier === 'marker') return 'quick'
+  return tier
+}
+
 function Processor() {
   const [files, setFiles] = useState([])
   const pollIntervalsRef = useRef({})
@@ -138,13 +143,13 @@ function Processor() {
           restoredFiles.push({
             id: savedJob.id,
             file: null,
-            name: savedJob.name,
-            status: 'complete',
-            assessment: savedJob.assessment,
-            selectedTier: savedJob.selectedTier,
-            result: savedJob.result,
-            error: null,
-            progress: null,
+                name: savedJob.name,
+                status: 'complete',
+                assessment: savedJob.assessment,
+                selectedTier: normalizeProcessorTier(savedJob.selectedTier),
+                result: savedJob.result,
+                error: null,
+                progress: null,
             queuePosition: null,
             startTime: null
           })
@@ -190,7 +195,7 @@ function Processor() {
               total_pages: status.total_pages,
               filename: status.filename
             },
-            selectedTier: savedJob?.selectedTier || status.tier || 'marker',
+            selectedTier: normalizeProcessorTier(savedJob?.selectedTier || status.tier || 'dots-ocr'),
             result: null,
             error: null,
             progress: status.status === 'processing' ? {

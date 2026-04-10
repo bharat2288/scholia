@@ -11,17 +11,12 @@ This is the fastest extraction option (~1-2 seconds total) but:
 Best for: Quick previews, simple text-only PDFs, bulk processing where quality isn't critical.
 """
 
-import pymupdf4llm
-from pathlib import Path
+import importlib.util
 
 
 def is_available() -> bool:
     """Check if pymupdf4llm is available."""
-    try:
-        import pymupdf4llm
-        return True
-    except ImportError:
-        return False
+    return importlib.util.find_spec("pymupdf4llm") is not None
 
 
 def extract_with_quick(
@@ -40,6 +35,13 @@ def extract_with_quick(
     Returns:
         Extracted text as markdown string
     """
+    if not is_available():
+        raise RuntimeError(
+            "Quick extraction requires pymupdf4llm. Rebuild the backend environment from backend/requirements.txt."
+        )
+
+    import pymupdf4llm
+
     # Update progress if tracking
     if progress_store and temp_id:
         progress_store[temp_id] = {
@@ -66,8 +68,8 @@ def extract_with_quick(
 def generate_document_folder_name(pdf_path: str, content: str = None) -> str:
     """
     Generate a standardized folder name for the document.
-    Uses the same logic as marker_extractor for consistency.
+    Uses the shared document naming logic for consistency.
     """
-    # Import the shared function from marker_extractor
-    from services.lit_engine.marker_extractor import generate_document_folder_name as marker_generate
-    return marker_generate(pdf_path, content)
+    from services.lit_engine.document_naming import generate_document_folder_name as shared_generate
+
+    return shared_generate(pdf_path, content)

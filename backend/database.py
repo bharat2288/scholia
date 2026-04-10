@@ -642,7 +642,7 @@ async def _create_schema():
             temp_id TEXT PRIMARY KEY,
             filename TEXT NOT NULL,
             pdf_path TEXT NOT NULL,
-            tier TEXT NOT NULL,         -- 'marker', 'dots-ocr'
+            tier TEXT NOT NULL,         -- 'quick', 'dots-ocr'
             status TEXT NOT NULL,       -- 'queued', 'processing', 'complete', 'error', 'cancelled'
             stage TEXT,                 -- 'waiting', 'loading', 'extracting', 'formatting', 'done', 'failed'
             current_page INTEGER DEFAULT 0,

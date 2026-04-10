@@ -1,0 +1,16 @@
+[Unit]
+Description=bhaforge OCR service
+After=network.target
+
+[Service]
+Type=simple
+User=bhasuri
+WorkingDirectory=/home/bhasuri/bhaforge-ocr
+Environment=DOTS_OCR_PATH=/home/bhasuri/dots-ocr
+Environment=BHAFORGE_OCR_DATA_ROOT=/home/bhasuri/bhaforge-ocr/.data
+ExecStart=/home/bhasuri/bhaforge-ocr/.venv/bin/python -m uvicorn server:app --host 0.0.0.0 --port 8201
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

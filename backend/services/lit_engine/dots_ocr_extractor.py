@@ -1,455 +1,570 @@
 """
-dots.ocr Extractor
-==================
-
-Tier 2: For complex layouts, scanned pages, equations, and tables.
-Uses the dots.ocr VLM model for structure-aware extraction.
-
-Ported from Lit Processor with Scholia storage integration.
-
-Requires:
-- dots.ocr package installed (set DOTS_OCR_PATH env var, or peer at ../lit-processor/dots-ocr)
-- Model weights downloaded
-- CUDA-capable GPU (RTX 3070 Ti or better)
-
-Model Persistence:
-- The DotsOCRParser is loaded once and reused across all jobs
-- This avoids the 2-5 minute model load time for each file
-- Call unload_model() to free GPU memory when done
-
-Resume Support:
-- Jobs save state to job_state.json in the output folder
-- On resume, already-processed pages are skipped
-- Progress continues from where it left off
+dots.ocr remote client for the bhaforge OCR service.
 """
 
 import json
-import sys
 import os
+import sys
+import tarfile
+import tempfile
+import time
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, Optional
 
-# Add dots.ocr to path (located in lit-processor project)
-# Resolve via env var, or fall back to peer directory relative to project root
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-DOTS_OCR_PATH = Path(os.getenv("DOTS_OCR_PATH", _PROJECT_ROOT.parent / "lit-processor" / "dots-ocr"))
-if str(DOTS_OCR_PATH) not in sys.path:
-    sys.path.insert(0, str(DOTS_OCR_PATH))
+import httpx
 
-# Check if dots.ocr is available
-DOTS_OCR_AVAILABLE = False
-WEIGHTS_PATH = DOTS_OCR_PATH / "weights" / "DotsOCR"
-
-try:
-    from dots_ocr.parser import DotsOCRParser
-    DOTS_OCR_AVAILABLE = True
-except ImportError as e:
-    print(f"[dots.ocr] Not available: {e}")
-
-# Global parser instance - loaded once, reused for all jobs
-_parser_instance = None
-_parser_lock = None  # Threading lock for safe access
+DEFAULT_POLL_INTERVAL_SECONDS = 1.0
+DEFAULT_HEALTH_TIMEOUT_SECONDS = 3.0
+DEFAULT_REMOTE_RETRY_LIMIT = int(os.getenv("BHAFORGE_OCR_RETRY_LIMIT", "60"))
+DEFAULT_REMOTE_RETRY_DELAY_SECONDS = float(os.getenv("BHAFORGE_OCR_RETRY_DELAY_SECONDS", "2.0"))
+REMOTE_RESULT_PREFIX = "bhaforge-ocr-result-"
+LOCAL_JOB_STATE_FILENAME = "job_state.json"
 
 
-def _get_parser():
-    """Get or create the singleton parser instance."""
-    global _parser_instance, _parser_lock
-    import threading
-
-    if _parser_lock is None:
-        _parser_lock = threading.Lock()
-
-    with _parser_lock:
-        if _parser_instance is None:
-            print("[dots.ocr] Loading model (this takes 2-5 minutes on first run)...")
-
-            # Change to dots.ocr directory so relative paths work
-            original_cwd = os.getcwd()
-            os.chdir(str(DOTS_OCR_PATH))
-
-            try:
-                _parser_instance = DotsOCRParser(
-                    use_hf=True,
-                    output_dir=str(DOTS_OCR_PATH / "output"),  # Default, overridden per-job
-                    dpi=120,  # Reduced from 150 for ~35% faster processing
-                    num_thread=1,  # HF mode uses single thread
-                    max_completion_tokens=12000  # Reduced from 24000 - academic papers rarely need more
-                )
-                print("[dots.ocr] Model loaded and ready")
-            finally:
-                os.chdir(original_cwd)
-
-        return _parser_instance
+class RemoteJobNotFoundError(RuntimeError):
+    """Raised when bhaforge no longer knows about a previously submitted job."""
 
 
-def unload_model():
-    """Unload the model to free GPU memory."""
-    global _parser_instance
-    if _parser_instance is not None:
-        # Clear the model references
-        if hasattr(_parser_instance, 'model'):
-            del _parser_instance.model
-        if hasattr(_parser_instance, 'processor'):
-            del _parser_instance.processor
-        _parser_instance = None
+class RemoteJobUnavailableError(RuntimeError):
+    """Raised when bhaforge cannot be polled reliably for a known job."""
 
-        # Force garbage collection and clear CUDA cache
-        import gc
-        gc.collect()
+
+def _resolve_service_url(service_url: Optional[str] = None) -> Optional[str]:
+    value = service_url or os.getenv("BHAFORGE_OCR_URL")
+    if not value:
+        return None
+    return value.rstrip("/")
+
+
+def _count_output_pages(save_dir: Path, filename: str) -> int:
+    pages = set()
+    for path in save_dir.glob(f"{filename}_page_*.json"):
+        match = path.stem.rsplit("_page_", 1)
+        if len(match) != 2:
+            continue
         try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except ImportError:
-            pass
-
-        print("[dots.ocr] Model unloaded, GPU memory freed")
+            if path.stat().st_size > 0:
+                pages.add(int(match[1]))
+        except (OSError, ValueError):
+            continue
+    return len(pages)
 
 
-def is_model_loaded() -> bool:
-    """Check if the model is currently loaded."""
-    return _parser_instance is not None
+def _job_state_path(save_dir: Path) -> Path:
+    return save_dir / LOCAL_JOB_STATE_FILENAME
 
 
-def is_available() -> bool:
-    """Check if dots.ocr is ready to use."""
-    if not DOTS_OCR_AVAILABLE:
+def _load_job_state(save_dir: Path) -> Dict[str, Any]:
+    state_path = _job_state_path(save_dir)
+    if not state_path.exists():
+        return {}
+    try:
+        return json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_job_state(save_dir: Path, state: Dict[str, Any]) -> None:
+    save_dir.mkdir(parents=True, exist_ok=True)
+    state_path = _job_state_path(save_dir)
+    temp_path = state_path.with_suffix(".json.tmp")
+    payload = dict(state)
+    payload["updated_at"] = time.time()
+    temp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    temp_path.replace(state_path)
+
+
+def _update_job_state(save_dir: Path, **changes: Any) -> Dict[str, Any]:
+    state = _load_job_state(save_dir)
+    state.update(changes)
+    _save_job_state(save_dir, state)
+    return state
+
+
+def _update_progress(progress_store: Optional[dict], temp_id: Optional[str], **changes: Any) -> None:
+    if not progress_store or not temp_id or temp_id not in progress_store:
+        return
+    progress_store[temp_id].update(changes)
+
+
+def _submit_remote_job(
+    client: httpx.Client,
+    url: str,
+    pdf_path_obj: Path,
+    file_prefix: str,
+    save_dir: Path,
+    *,
+    progress_store: Optional[dict] = None,
+    temp_id: Optional[str] = None,
+    stage_label: str = "submitting remote",
+) -> str:
+    _update_progress(progress_store, temp_id, stage=stage_label)
+    _update_job_state(
+        save_dir,
+        remote_job_id=None,
+        status="processing",
+        stage=stage_label,
+        last_error=None,
+    )
+    with open(pdf_path_obj, "rb") as handle:
+        response = client.post(
+            f"{url}/ocr/process",
+            data={"save_name": file_prefix},
+            files={"file": (pdf_path_obj.name, handle, "application/pdf")},
+        )
+    response.raise_for_status()
+    payload = response.json()
+    job_id = payload.get("job_id")
+    if not job_id:
+        raise RuntimeError("bhaforge OCR service did not return a job_id.")
+    _update_job_state(
+        save_dir,
+        remote_job_id=job_id,
+        status=payload.get("status", "queued"),
+        stage="submitted",
+        last_error=None,
+    )
+    return job_id
+
+
+def _poll_remote_status(
+    client: httpx.Client,
+    url: str,
+    job_id: str,
+    *,
+    retry_limit: int,
+    retry_delay_seconds: float,
+    progress_store: Optional[dict] = None,
+    temp_id: Optional[str] = None,
+    save_dir: Optional[Path] = None,
+    stage_label: str = "waiting for remote reconnect",
+) -> Dict[str, Any]:
+    failures = 0
+    while True:
+        try:
+            response = client.get(f"{url}/ocr/status/{job_id}", timeout=10.0)
+            if response.status_code == 404:
+                raise RemoteJobNotFoundError(f"bhaforge OCR job {job_id} was not found")
+            response.raise_for_status()
+            return response.json()
+        except RemoteJobNotFoundError as exc:
+            _update_progress(progress_store, temp_id, stage=stage_label)
+            if save_dir is not None:
+                _update_job_state(
+                    save_dir,
+                    remote_job_id=job_id,
+                    status="processing",
+                    stage=stage_label,
+                    last_error=str(exc),
+                )
+            raise
+        except (httpx.HTTPError, ValueError) as exc:
+            failures += 1
+            _update_progress(progress_store, temp_id, stage=stage_label)
+            if save_dir is not None:
+                _update_job_state(
+                    save_dir,
+                    remote_job_id=job_id,
+                    status="processing",
+                    stage=stage_label,
+                    last_error=str(exc),
+                )
+            if failures >= retry_limit:
+                raise RemoteJobUnavailableError(
+                    f"Lost contact with bhaforge OCR job {job_id} after {failures} retries: {exc}"
+                ) from exc
+            time.sleep(retry_delay_seconds)
+
+
+def _safe_extract_tar(archive_path: Path, destination: Path) -> None:
+    destination = destination.resolve()
+    with tarfile.open(archive_path, "r:gz") as tar:
+        for member in tar.getmembers():
+            member_path = (destination / member.name).resolve()
+            if member_path != destination and destination not in member_path.parents:
+                raise RuntimeError(f"Unsafe path in OCR result archive: {member.name}")
+        tar.extractall(destination)
+
+
+def is_available(service_url: Optional[str] = None) -> bool:
+    """
+    Whether dots-ocr is configured for this Scholia checkout.
+    """
+    return bool(_resolve_service_url(service_url))
+
+
+def is_remote_available(service_url: Optional[str] = None) -> bool:
+    """
+    Whether the configured bhaforge OCR service is reachable.
+    """
+    url = _resolve_service_url(service_url)
+    if not url:
         return False
-    return WEIGHTS_PATH.exists()
-
-
-def get_setup_status() -> dict:
-    """Get detailed setup status for diagnostics."""
-    status = {
-        "dots_ocr_installed": DOTS_OCR_AVAILABLE,
-        "weights_present": WEIGHTS_PATH.exists(),
-        "weights_path": str(WEIGHTS_PATH),
-        "cuda_available": False,
-        "gpu_name": None,
-        "gpu_memory_gb": 0
-    }
 
     try:
-        import torch
-        status["cuda_available"] = torch.cuda.is_available()
-        if torch.cuda.is_available():
-            status["gpu_name"] = torch.cuda.get_device_name(0)
-            status["gpu_memory_gb"] = round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1)
-    except ImportError:
-        pass
+        response = httpx.get(
+            f"{url}/ocr/health",
+            timeout=DEFAULT_HEALTH_TIMEOUT_SECONDS,
+        )
+        if response.status_code != 200:
+            return False
+        payload = response.json()
+        return payload.get("status") == "ok"
+    except (httpx.HTTPError, ValueError):
+        return False
+
+
+def get_setup_status(service_url: Optional[str] = None) -> dict:
+    """
+    Return remote OCR configuration diagnostics.
+    """
+    url = _resolve_service_url(service_url)
+    status = {
+        "service_url": url,
+        "configured": bool(url),
+        "remote_available": False,
+    }
+
+    if not url:
+        return status
+
+    try:
+        response = httpx.get(
+            f"{url}/ocr/health",
+            timeout=DEFAULT_HEALTH_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        status["remote_available"] = payload.get("status") == "ok"
+        status["health"] = payload
+    except (httpx.HTTPError, ValueError) as exc:
+        status["error"] = str(exc)
 
     return status
 
 
-# =============================================================================
-# Job State Management - for resume support
-# =============================================================================
-
-def get_job_state_path(save_dir: Path) -> Path:
-    """Get path to job_state.json for a given output directory."""
-    return save_dir / "job_state.json"
-
-
-def load_job_state(save_dir: Path) -> Optional[Dict[str, Any]]:
-    """Load job state from disk if it exists."""
-    state_path = get_job_state_path(save_dir)
-    if state_path.exists():
-        try:
-            with open(state_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
-            print(f"[dots.ocr] Warning: Could not load job state: {e}")
-    return None
-
-
-def save_job_state(save_dir: Path, state: Dict[str, Any]):
-    """Save job state to disk."""
-    state_path = get_job_state_path(save_dir)
-    try:
-        with open(state_path, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2)
-    except IOError as e:
-        print(f"[dots.ocr] Warning: Could not save job state: {e}")
-
-
-def delete_job_state(save_dir: Path):
-    """Delete job state file after successful completion."""
-    state_path = get_job_state_path(save_dir)
-    if state_path.exists():
-        try:
-            state_path.unlink()
-            print(f"[dots.ocr] Cleaned up job state: {state_path}")
-        except IOError as e:
-            print(f"[dots.ocr] Warning: Could not delete job state: {e}")
-
-
-def detect_completed_pages(save_dir: Path, filename: str, total_pages: int) -> List[int]:
-    """
-    Detect which pages have already been processed by checking for output files.
-
-    Returns list of completed page indices (0-based).
-    """
-    completed = []
-    for page_idx in range(total_pages):
-        # Check for the .md file which is the final output for each page
-        md_file = save_dir / f"{filename}_page_{page_idx}.md"
-        json_file = save_dir / f"{filename}_page_{page_idx}.json"
-
-        # Consider page complete if both .md and .json exist
-        if md_file.exists() and json_file.exists():
-            completed.append(page_idx)
-
-    return completed
-
-
-# =============================================================================
-# Extraction Logic
-# =============================================================================
-
-def extract_with_dots_ocr(
+def extract_with_dots_ocr_remote(
     pdf_path: str,
     temp_id: str = None,
     progress_store: dict = None,
     output_dir: Path = None,
-    save_name: str = None
+    save_name: str = None,
+    service_url: str = None,
 ) -> str:
     """
-    Extract content with progress tracking and resume support.
-
-    Automatically detects previously processed pages and skips them.
-    Saves job state after each page for crash recovery.
-
-    Args:
-        pdf_path: Path to the PDF file
-        temp_id: ID for progress tracking (optional)
-        progress_store: Dict to update with progress (optional)
-        output_dir: Where to save intermediate files (optional, defaults to temp)
-        save_name: Base name for output files (optional, defaults to PDF stem).
-            When provided, files are written directly to output_dir as
-            {save_name}_page_N.{ext} — matching the RunPod convention.
-
-    Returns:
-        Extracted content as Scholia-formatted string
+    Upload a PDF to bhaforge, poll progress, download the result archive,
+    and return the extracted content in Scholia format.
     """
-    import fitz  # PyMuPDF for page counting
-    from dots_ocr.utils.doc_utils import load_images_from_pdf
+    url = _resolve_service_url(service_url)
+    if not url:
+        raise RuntimeError("BHAFORGE_OCR_URL is not configured.")
 
-    if not DOTS_OCR_AVAILABLE:
-        raise RuntimeError(
-            f"dots.ocr is not installed. Ensure {DOTS_OCR_PATH} exists, or set DOTS_OCR_PATH env var."
-        )
-
-    if not is_available():
-        raise RuntimeError(
-            f"dots.ocr model weights not found at {WEIGHTS_PATH}. "
-            "Run the setup wizard to download them."
-        )
-
-    # Normalize paths
     pdf_path_obj = Path(pdf_path).resolve()
-    filename = pdf_path_obj.stem
+    if not pdf_path_obj.exists():
+        raise FileNotFoundError(f"PDF not found: {pdf_path_obj}")
 
-    # Determine the base name for output files
-    file_prefix = save_name if save_name else filename
-
-    # Use provided output_dir directly when save_name is given (caller manages structure),
-    # otherwise create a subdirectory for intermediate files
-    if output_dir and save_name:
-        save_dir = output_dir
-    elif output_dir:
-        save_dir = output_dir / "dots_ocr_pages"
-    else:
-        save_dir = pdf_path_obj.parent / f"{filename}_dots_ocr"
+    save_dir = Path(output_dir or pdf_path_obj.parent)
     save_dir.mkdir(parents=True, exist_ok=True)
+    file_prefix = save_name or pdf_path_obj.stem
+    state = _update_job_state(
+        save_dir,
+        temp_id=temp_id,
+        filename=pdf_path_obj.name,
+        pdf_path=str(pdf_path_obj),
+        save_name=file_prefix,
+        service_url=url,
+        status="processing",
+        stage="connecting remote",
+    )
+    total_pages_hint = int(state.get("total_pages") or 0)
+    local_completed_pages = _count_output_pages(save_dir, file_prefix)
+    if total_pages_hint and local_completed_pages >= total_pages_hint:
+        _update_progress(
+            progress_store,
+            temp_id,
+            stage="formatting",
+            current_page=total_pages_hint,
+            total_pages=total_pages_hint,
+            percent=95,
+        )
+        _update_job_state(
+            save_dir,
+            status="complete",
+            stage="downloaded",
+            current_page=total_pages_hint,
+            total_pages=total_pages_hint,
+            percent=100,
+            last_error=None,
+        )
+        return dots_ocr_to_scholia(save_dir, file_prefix, total_pages_hint)
 
-    # Get total pages
-    doc = fitz.open(str(pdf_path_obj))
-    total_pages = len(doc)
-    doc.close()
-
-    # Check for resume - detect already completed pages
-    completed_pages = detect_completed_pages(save_dir, file_prefix, total_pages)
-    remaining_pages = [i for i in range(total_pages) if i not in completed_pages]
-
-    if completed_pages:
-        print(f"[dots.ocr] Resume detected: {len(completed_pages)}/{total_pages} pages already done")
-        print(f"[dots.ocr] Remaining pages: {remaining_pages}")
-
-    # Initialize progress
-    if progress_store and temp_id:
-        progress_store[temp_id]["total_pages"] = total_pages
-        progress_store[temp_id]["current_page"] = len(completed_pages)
-        if is_model_loaded():
-            progress_store[temp_id]["stage"] = "extracting"
-        else:
-            progress_store[temp_id]["stage"] = "loading model"
-
-    # Get or create the parser (loads model on first call)
-    parser = _get_parser()
-
-    # Update progress now that model is loaded
-    if progress_store and temp_id:
-        progress_store[temp_id]["stage"] = "extracting"
-
-    # Change to dots.ocr directory so relative paths work
-    original_cwd = os.getcwd()
-    os.chdir(str(DOTS_OCR_PATH))
-
-    try:
-        print(f"[dots.ocr] Processing: {pdf_path_obj}")
-        print(f"[dots.ocr] Output dir: {save_dir}")
-
-        # Check for cancellation before starting
-        if progress_store and temp_id:
-            if progress_store[temp_id].get("status") == "cancelled":
-                raise InterruptedError("Processing cancelled by user")
-
-        # Calculate initial progress (account for already-completed pages)
-        base_percent = int(10 + (len(completed_pages) / total_pages) * 75)
-        if progress_store and temp_id:
-            progress_store[temp_id]["percent"] = base_percent
-
-        # Process remaining pages if any
-        new_results = []
-        if remaining_pages:
-            # Load all page images from PDF
-            print(f"[dots.ocr] Loading PDF images...")
-            all_images = load_images_from_pdf(str(pdf_path_obj), dpi=parser.dpi)
-
-            # Process only remaining pages
-            prompt_mode = "prompt_layout_all_en"
-            for i, page_idx in enumerate(remaining_pages):
-                # Check for cancellation
-                if progress_store and temp_id:
-                    if progress_store[temp_id].get("status") == "cancelled":
-                        raise InterruptedError("Processing cancelled by user")
-
-                print(f"[dots.ocr] Processing page {page_idx + 1}/{total_pages}...")
-
-                # Get the image for this page
-                origin_image = all_images[page_idx]
-
-                # Process single page using parser's internal method
-                result = parser._parse_single_image(
-                    origin_image=origin_image,
-                    prompt_mode=prompt_mode,
-                    save_dir=str(save_dir),
-                    save_name=file_prefix,
-                    source="pdf",
-                    page_idx=page_idx
+    with httpx.Client(timeout=httpx.Timeout(60.0, connect=DEFAULT_HEALTH_TIMEOUT_SECONDS)) as client:
+        job_id = state.get("remote_job_id")
+        status_payload = None
+        restart_attempted = False
+        if job_id:
+            _update_progress(progress_store, temp_id, stage="reattaching remote")
+            _update_job_state(save_dir, stage="reattaching remote")
+            try:
+                status_payload = _poll_remote_status(
+                    client,
+                    url,
+                    job_id,
+                    retry_limit=DEFAULT_REMOTE_RETRY_LIMIT,
+                    retry_delay_seconds=DEFAULT_REMOTE_RETRY_DELAY_SECONDS,
+                    progress_store=progress_store,
+                    temp_id=temp_id,
+                    save_dir=save_dir,
+                    stage_label="reattaching remote",
                 )
-                result['file_path'] = str(pdf_path_obj)
-                new_results.append(result)
+            except RemoteJobNotFoundError as exc:
+                _update_job_state(
+                    save_dir,
+                    remote_job_id=None,
+                    status="queued",
+                    stage="remote job missing",
+                    last_error=str(exc),
+                )
+                job_id = None
+                status_payload = None
+            except RemoteJobUnavailableError as exc:
+                raise RuntimeError(
+                    f"Unable to reattach to existing bhaforge OCR job {job_id}. "
+                    f"Local state was preserved for resume: {exc}"
+                ) from exc
 
-                # Update progress after each page
-                pages_done = len(completed_pages) + i + 1
-                percent = int(10 + (pages_done / total_pages) * 75)
-                if progress_store and temp_id:
-                    progress_store[temp_id]["current_page"] = pages_done
-                    progress_store[temp_id]["percent"] = percent
+            if status_payload is not None:
+                remote_status = status_payload.get("status")
+            else:
+                remote_status = None
+            if remote_status in {"error", "cancelled", "canceled"}:
+                _update_job_state(
+                    save_dir,
+                    remote_job_id=None,
+                    status=remote_status,
+                    stage=status_payload.get("stage", "failed"),
+                    last_error=status_payload.get("error"),
+                )
+                job_id = None
+                status_payload = None
 
-                # Save job state after each page (for crash recovery)
-                save_job_state(save_dir, {
-                    "pdf_path": str(pdf_path_obj),
-                    "total_pages": total_pages,
-                    "completed_pages": completed_pages + remaining_pages[:i+1],
-                    "status": "processing"
-                })
+        if not job_id:
+            job_id = _submit_remote_job(
+                client,
+                url,
+                pdf_path_obj,
+                file_prefix,
+                save_dir,
+                progress_store=progress_store,
+                temp_id=temp_id,
+                stage_label="submitting remote",
+            )
 
-        print(f"[dots.ocr] Extraction complete, {total_pages} pages total")
+        total_pages = total_pages_hint
+        while True:
+            if progress_store and temp_id and progress_store[temp_id].get("status") == "cancelled":
+                try:
+                    client.post(f"{url}/ocr/cancel/{job_id}", timeout=10.0)
+                finally:
+                    raise InterruptedError("Processing cancelled by user")
 
-        if progress_store and temp_id:
-            progress_store[temp_id]["percent"] = 85
-            progress_store[temp_id]["current_page"] = total_pages
+            if status_payload is None:
+                try:
+                    status_payload = _poll_remote_status(
+                        client,
+                        url,
+                        job_id,
+                        retry_limit=DEFAULT_REMOTE_RETRY_LIMIT,
+                        retry_delay_seconds=DEFAULT_REMOTE_RETRY_DELAY_SECONDS,
+                        progress_store=progress_store,
+                        temp_id=temp_id,
+                        save_dir=save_dir,
+                    )
+                except RemoteJobNotFoundError as exc:
+                    if restart_attempted:
+                        _update_job_state(
+                            save_dir,
+                            remote_job_id=None,
+                            status="error",
+                            stage="failed",
+                            last_error=str(exc),
+                        )
+                        raise RuntimeError(
+                            f"bhaforge OCR job disappeared twice while processing {pdf_path_obj.name}: {exc}"
+                        ) from exc
+                    restart_attempted = True
+                    job_id = _submit_remote_job(
+                        client,
+                        url,
+                        pdf_path_obj,
+                        file_prefix,
+                        save_dir,
+                        progress_store=progress_store,
+                        temp_id=temp_id,
+                        stage_label="resubmitting remote",
+                    )
+                    status_payload = None
+                    total_pages = 0
+                    continue
+                except RemoteJobUnavailableError as exc:
+                    raise RuntimeError(
+                        f"Lost contact with bhaforge OCR job {job_id}. "
+                        f"Resume can reattach later: {exc}"
+                    ) from exc
 
-        # Mark job as complete in state file (will be deleted later)
-        save_job_state(save_dir, {
-            "pdf_path": str(pdf_path_obj),
-            "total_pages": total_pages,
-            "completed_pages": list(range(total_pages)),
-            "status": "complete"
-        })
+            remote_status = status_payload.get("status", "processing")
+            total_pages = status_payload.get("total_pages") or total_pages
+            remote_percent = int(status_payload.get("percent", 0) or 0)
+            remote_stage = status_payload.get("stage", "extracting")
+            remote_page = status_payload.get("current_page", 0)
 
-        # Convert to Scholia format
-        content = dots_ocr_to_scholia(save_dir, file_prefix, total_pages)
+            _update_progress(
+                progress_store,
+                temp_id,
+                stage=remote_stage,
+                current_page=remote_page,
+                total_pages=total_pages,
+                percent=min(85, 10 + int(remote_percent * 0.75)),
+            )
+            _update_job_state(
+                save_dir,
+                remote_job_id=job_id,
+                status=remote_status,
+                stage=remote_stage,
+                current_page=remote_page,
+                total_pages=total_pages,
+                percent=remote_percent,
+                last_error=None,
+            )
 
-        return content
+            if remote_status == "complete":
+                break
+            if remote_status == "error":
+                _update_job_state(
+                    save_dir,
+                    remote_job_id=None,
+                    status="error",
+                    stage=remote_stage,
+                    current_page=remote_page,
+                    total_pages=total_pages,
+                    percent=remote_percent,
+                    last_error=status_payload.get("error"),
+                )
+                raise RuntimeError(status_payload.get("error") or "bhaforge OCR job failed")
+            if remote_status in {"cancelled", "canceled"}:
+                _update_job_state(
+                    save_dir,
+                    remote_job_id=None,
+                    status="cancelled",
+                    stage=remote_stage,
+                    current_page=remote_page,
+                    total_pages=total_pages,
+                    percent=remote_percent,
+                    last_error=None,
+                )
+                raise InterruptedError("bhaforge OCR job was cancelled")
 
-    finally:
-        os.chdir(original_cwd)
+            status_payload = None
+            time.sleep(DEFAULT_POLL_INTERVAL_SECONDS)
+
+        with tempfile.NamedTemporaryFile(
+            suffix=".tar.gz",
+            prefix=REMOTE_RESULT_PREFIX,
+            delete=False,
+        ) as temp_archive:
+            archive_path = Path(temp_archive.name)
+
+        try:
+            _update_progress(progress_store, temp_id, stage="downloading remote result")
+            _update_job_state(
+                save_dir,
+                remote_job_id=job_id,
+                status="complete",
+                stage="downloading remote result",
+                current_page=total_pages,
+                total_pages=total_pages,
+                percent=100,
+            )
+            with client.stream("GET", f"{url}/ocr/result/{job_id}", timeout=None) as stream:
+                stream.raise_for_status()
+                with open(archive_path, "wb") as archive_file:
+                    for chunk in stream.iter_bytes():
+                        archive_file.write(chunk)
+
+            _safe_extract_tar(archive_path, save_dir)
+        finally:
+            archive_path.unlink(missing_ok=True)
+
+    total_pages = total_pages or _count_output_pages(save_dir, file_prefix)
+    if total_pages <= 0:
+        raise RuntimeError("bhaforge OCR result did not contain any page JSON files")
+
+    _update_job_state(
+        save_dir,
+        remote_job_id=job_id,
+        status="complete",
+        stage="downloaded",
+        current_page=total_pages,
+        total_pages=total_pages,
+        percent=100,
+        last_error=None,
+    )
+    return dots_ocr_to_scholia(save_dir, file_prefix, total_pages)
 
 
 def dots_ocr_to_scholia(save_dir: Path, filename: str, total_pages: int) -> str:
     """
     Convert dots.ocr per-page output to Scholia's canonical format.
-
-    Scholia format:
-    - [PAGE n] for page markers
-    - [SECTION] # Heading for section headers
-    - [FIGURE] for images/figures
-    - [TABLE] for tables
-    - LaTeX equations preserved as-is or in $...$ delimiters
-
-    Args:
-        save_dir: Directory containing dots.ocr page outputs
-        filename: Base filename (without extension)
-        total_pages: Total number of pages
-
-    Returns:
-        Formatted text string
     """
     output_lines = []
 
     for page_idx in range(total_pages):
-        # Add page marker
         output_lines.append(f"\n[PAGE {page_idx + 1}]\n")
 
-        # Try to read the markdown file (primary output)
         md_path = save_dir / f"{filename}_page_{page_idx}.md"
         json_path = save_dir / f"{filename}_page_{page_idx}.json"
 
         if md_path.exists():
-            with open(md_path, "r", encoding="utf-8") as f:
-                md_content = f.read()
+            with open(md_path, "r", encoding="utf-8") as handle:
+                md_content = handle.read()
+            output_lines.append(process_dots_ocr_markdown(md_content))
+            continue
 
-            # Process markdown content
-            processed = process_dots_ocr_markdown(md_content)
-            output_lines.append(processed)
+        if not json_path.exists():
+            continue
 
-        elif json_path.exists():
-            # Fallback: read JSON layout and convert
-            with open(json_path, "r", encoding="utf-8") as f:
-                layout_data = json.load(f)
+        with open(json_path, "r", encoding="utf-8") as handle:
+            layout_data = json.load(handle)
 
-            if isinstance(layout_data, list):
-                for item in layout_data:
-                    category = item.get("category", item.get("type", "Text"))
-                    text = item.get("text", item.get("content", ""))
+        if isinstance(layout_data, str):
+            layout_data = json.loads(layout_data)
 
-                    if category in ["Title", "Section-header"]:
-                        output_lines.append(f"\n[SECTION] # {text}\n")
-                    elif category in ["Picture", "Figure"]:
-                        output_lines.append("\n[FIGURE]\n")
-                    elif category == "Table":
-                        output_lines.append(f"\n[TABLE]\n{text}\n")
-                    elif category == "Equation":
-                        # Preserve LaTeX
-                        output_lines.append(f"\n{text}\n")
-                    else:
-                        output_lines.append(f"{text}\n")
+        if not isinstance(layout_data, list):
+            continue
+
+        for item in layout_data:
+            if not isinstance(item, dict):
+                continue
+            category = item.get("category", item.get("type", "Text"))
+            text = item.get("text", item.get("content", ""))
+
+            if category in ["Title", "Section-header"]:
+                output_lines.append(f"\n[SECTION] # {text}\n")
+            elif category in ["Picture", "Figure"]:
+                output_lines.append("\n[FIGURE]\n")
+            elif category == "Table":
+                output_lines.append(f"\n[TABLE]\n{text}\n")
+            elif category == "Equation":
+                output_lines.append(f"\n{text}\n")
+            else:
+                output_lines.append(f"{text}\n")
 
     return "\n".join(output_lines)
 
 
 def process_dots_ocr_markdown(md_content: str) -> str:
     """
-    Process dots.ocr markdown to Scholia format.
-
-    Converts:
-    - # Heading -> [SECTION] # Heading
-    - ![](image) -> [FIGURE]
-    - <table>...</table> -> [TABLE] ...
-    - Preserves LaTeX equations
+    Convert dots.ocr markdown output to Scholia markers.
     """
     import re
 
@@ -457,64 +572,24 @@ def process_dots_ocr_markdown(md_content: str) -> str:
     output_lines = []
 
     for line in lines:
-        # Convert headings to section markers
         if line.startswith("# ") or line.startswith("## ") or line.startswith("### "):
             output_lines.append(f"[SECTION] {line}")
-
-        # Convert images to figure markers
-        elif re.match(r'!\[.*?\]\(.*?\)', line):
+        elif re.match(r"!\[.*?\]\(.*?\)", line):
             output_lines.append("[FIGURE]")
-
-        # Convert tables
         elif line.strip().startswith("<table") or line.strip() == "[TABLE]":
             output_lines.append("[TABLE]")
-
-        # Preserve equations (usually in $...$ or $$...$$)
         else:
             output_lines.append(line)
 
     return "\n".join(output_lines)
 
 
-def generate_document_folder_name(pdf_path: str, content: str = None) -> str:
-    """
-    Generate document folder name from PDF filename.
-
-    Expected format: Author_Year_Title.pdf
-    Output: Author_Year_Title_Words (first 6 words of title, underscored)
-
-    This is the same logic as marker_extractor.py for consistency.
-    """
-    import re
-    from pathlib import Path
-
-    filename = Path(pdf_path).stem
-
-    # Clean up filename
-    # Remove common suffixes like "(1)", "_final", etc.
-    filename = re.sub(r'\s*\(\d+\)\s*$', '', filename)
-    filename = re.sub(r'_?(final|draft|v\d+)\s*$', '', filename, flags=re.IGNORECASE)
-
-    # Replace spaces with underscores, collapse multiple underscores
-    folder_name = re.sub(r'[\s-]+', '_', filename)
-    folder_name = re.sub(r'_+', '_', folder_name)
-    folder_name = folder_name.strip('_')
-
-    # Truncate if too long (max 80 chars for folder name)
-    if len(folder_name) > 80:
-        folder_name = folder_name[:80].rsplit('_', 1)[0]
-
-    return folder_name
-
-
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "--status":
-            print(json.dumps(get_setup_status(), indent=2))
-        else:
-            result = extract_with_dots_ocr(sys.argv[1])
-            print(result[:2000])  # Print first 2000 chars
+    if len(sys.argv) > 1 and sys.argv[1] == "--status":
+        print(json.dumps(get_setup_status(), indent=2))
+    elif len(sys.argv) > 1:
+        result = extract_with_dots_ocr_remote(sys.argv[1])
+        print(result[:2000])
     else:
         print("Usage: python dots_ocr_extractor.py <pdf_path> | --status")
-        print("\nStatus:")
         print(json.dumps(get_setup_status(), indent=2))

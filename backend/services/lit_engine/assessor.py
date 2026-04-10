@@ -2,10 +2,10 @@
 PDF Prescan Assessment
 ======================
 Analyzes PDFs to recommend the appropriate extraction tier:
-- marker: Text-based PDFs, good layouts (fast, ~20-40s)
+- quick: Text-based PDFs, good layouts (fast, ~1-2s)
 - dots-ocr: Scanned PDFs, complex layouts, equations, tables (slow, ~2.5s/page)
 
-Ported from Lit Processor with tier updates.
+Ported from Lit Processor with the post-marker tier model.
 """
 
 import fitz  # PyMuPDF
@@ -21,14 +21,14 @@ def assess_pdf(pdf_path: str) -> dict:
     - Text extraction yield (scanned vs text-based)
     - Math/equation indicators
     - Layout complexity
-    - Page count (100+ defaults to marker for speed)
+    - Page count (used for time estimates)
 
     Args:
         pdf_path: Path to the PDF file
 
     Returns:
         dict with:
-            recommendation: "marker" | "dots-ocr"
+            recommendation: "quick" | "dots-ocr"
             page_count: int
             time_estimates: dict with seconds per tier
             signals: dict with detection details
@@ -73,7 +73,8 @@ def assess_pdf(pdf_path: str) -> dict:
     is_mostly_scanned = scanned_ratio > 0.5
     is_math_heavy = math_signals >= 2
 
-    # Decision logic - simplified to marker vs dots-ocr
+    # Decision logic - quick for straightforward born-digital text, dots-ocr
+    # for scanned or math-heavy documents where structure fidelity matters.
     if is_mostly_scanned:
         # Scanned document - needs OCR
         recommendation = "dots-ocr"
@@ -87,17 +88,15 @@ def assess_pdf(pdf_path: str) -> dict:
         recommendation = "dots-ocr"
         reason = "Complex tables with equations"
     else:
-        # Standard text-based document - Marker handles well
-        recommendation = "marker"
-        reason = "Text-based document, good for Marker extraction"
+        # Standard text-based document - quick extraction is usually sufficient
+        recommendation = "quick"
+        reason = "Text-based document, good candidate for quick extraction"
 
     # Time estimates (rough, in seconds)
     # Quick: ~0.05s per page (pure text extraction, no model)
-    # Marker: ~1-2s per page for most documents
     # dots-ocr: ~2.5s per page (GPU-bound)
     time_estimates = {
         "quick": max(2, round(page_count * 0.05, 1)),  # Minimum 2s for UI display
-        "marker": round(page_count * 1.5, 1),
         "dots-ocr": round(page_count * 2.5, 1)
     }
 

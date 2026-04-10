@@ -88,7 +88,7 @@ But my workflow kept bumping against edges:
 - Installable as a Progressive Web App with offline caching
 
 ### ⚙️ PDF Processing Pipeline
-- Multi-tier extraction: Marker → dots-ocr → Tesseract
+- Multi-tier extraction: Quick → dots-ocr → RunPod
 - Batch processing with job persistence
 - Optional GPU acceleration via RunPod (remote pod management)
 - Figure extraction with bounding box cropping
@@ -182,7 +182,7 @@ https://github.com/user-attachments/assets/38a8b6c1-f0de-4f34-b6f3-f4023ff44cf2
 - **Backend**: FastAPI + SQLite (aiosqlite) + FTS5
 - **Frontend**: React 18 + Vite + Tailwind CSS + TanStack Query + Zustand
 - **LLM Integration**: Anthropic SDK, OpenAI SDK (multi-provider)
-- **PDF Extraction**: Marker, dots-ocr, PyMuPDF, Tesseract
+- **PDF Extraction**: dots-ocr (bhaforge service), pymupdf4llm, PyMuPDF
 - **Web/Video**: trafilatura, yt-dlp, FxTwitter API
 
 ---
@@ -263,7 +263,7 @@ scholia/
 │   └── services/              # Business logic
 │       ├── chat/              # Chat service + config
 │       ├── council/           # Council service + preset definitions
-│       ├── lit_engine/        # PDF extraction (marker, dots-ocr, epub)
+│       ├── lit_engine/        # PDF extraction (quick, dots-ocr, epub)
 │       ├── analysis_engine.py # One-shot LLM analysis (Summary, Key Claims)
 │       ├── rlm_agent.py       # Agentic research model with tools
 │       ├── rlm_v2_engine.py   # Code-execution research engine
@@ -336,7 +336,7 @@ This is alpha software. Things may break. The database schema may change.
 ## Acknowledgments
 
 - Deeply influenced by [RemNote](https://www.remnote.com/) — its model of bidirectional linking and highlights-as-objects shaped this project's design
-- PDF extraction powered by [Marker](https://github.com/VikParuchuri/marker) and [dots-ocr](https://github.com/ai-forever/dots-ocr)
+- PDF extraction powered by [dots-ocr](https://github.com/ai-forever/dots-ocr), [PyMuPDF](https://pymupdf.readthedocs.io/), and [pymupdf4llm](https://github.com/pymupdf/pymupdf4llm)
 
 ---
 
