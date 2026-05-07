@@ -355,6 +355,19 @@ export function useSourceContent(id) {
   })
 }
 
+/**
+ * Fetch the compact Meshbook facet for a source.
+ * Routed through the Scholia backend to avoid browser CORS coupling.
+ */
+export function useMeshbookFacet(sourceId) {
+  return useQuery({
+    queryKey: ['meshbook-facet', sourceId],
+    queryFn: () => apiFetch(`/meshbook/facet/${sourceId}`),
+    enabled: !!sourceId,
+    staleTime: 30000,
+  })
+}
+
 
 /**
  * Update reading position

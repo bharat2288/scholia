@@ -23,6 +23,20 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
+# Default model + fallback chain
+# ============================================================
+# Primary: gpt-5.4 (OpenAI direct, via OPENAI_COUNCIL_KEY).
+# Fallback: x-ai/grok-4.20 via OpenRouter (OPENROUTER_API_KEY) — used when the
+# primary model errors out (e.g. credit exhaustion, rate limit, 5xx).
+# Anthropic Claude models are intentionally NOT in the fallback chain — the Max
+# subscription does not grant API credit, and direct Anthropic billing was the
+# original failure mode this chain is defending against.
+
+DEFAULT_ANALYSIS_MODEL = "gpt-5.4"
+ANALYSIS_FALLBACK_MODEL = "grok-4.20"
+
+
+# ============================================================
 # Analysis prompt templates
 # ============================================================
 # Ported from pod-transcriber, adapted for Scholia's [TIMESTAMP] format.
@@ -170,7 +184,7 @@ def list_available_analyses() -> list[dict]:
 def estimate_cost(
     transcript_content: str,
     analysis_types: list[str],
-    model_id: str = "claude-opus",
+    model_id: str = DEFAULT_ANALYSIS_MODEL,
 ) -> CostEstimate:
     """
     Pre-flight cost estimate based on transcript word count and model pricing.
@@ -293,14 +307,20 @@ def _call_openai(
     """
     Make a synchronous OpenAI API call.
 
+    GPT-5.x and reasoning models (o1/o3/o4) reject `max_tokens` and require
+    `max_completion_tokens` instead. Older chat models still use `max_tokens`.
+
     Returns (response_text, input_tokens, output_tokens).
     """
     client = openai.OpenAI(api_key=api_key)
 
+    is_new_model = model.startswith(("gpt-5", "o1", "o3", "o4"))
+    token_param = "max_completion_tokens" if is_new_model else "max_tokens"
+
     response = client.chat.completions.create(
         model=model,
-        max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
+        **{token_param: max_tokens},
     )
 
     response_text = response.choices[0].message.content
@@ -344,7 +364,7 @@ def _call_openrouter(
 def run_analysis_sync(
     analysis_type: str,
     transcript_content: str,
-    model_id: str = "claude-opus",
+    model_id: str = DEFAULT_ANALYSIS_MODEL,
     metadata: Optional[dict] = None,
 ) -> AnalysisResult:
     """
@@ -353,7 +373,7 @@ def run_analysis_sync(
     Args:
         analysis_type: Key into ANALYSIS_PROMPTS (e.g., "summary", "key_claims")
         transcript_content: The full transcript text with [TIMESTAMP] markers
-        model_id: Key into CHAT_MODELS (e.g., "claude-opus")
+        model_id: Key into CHAT_MODELS (e.g., "gpt-5.4")
         metadata: Optional dict with title, channel, duration_formatted
 
     Returns:
@@ -417,3 +437,43 @@ def run_analysis_sync(
         tokens_output=output_tokens,
         cost_usd=cost_usd,
     )
+
+
+def run_analysis_with_fallback(
+    analysis_type: str,
+    transcript_content: str,
+    model_id: str = DEFAULT_ANALYSIS_MODEL,
+    metadata: Optional[dict] = None,
+    fallback_model_id: str = ANALYSIS_FALLBACK_MODEL,
+) -> tuple[AnalysisResult, Optional[str]]:
+    """
+    Run an analysis with an automatic fallback to a second provider.
+
+    Tries `model_id` first. If the primary call raises any exception
+    (credit exhaustion, rate limit, auth error, timeout), logs the error
+    and retries once with `fallback_model_id`. If the primary and fallback
+    refer to the same model, no retry is attempted.
+
+    Returns:
+        (result, fallback_notice) — `fallback_notice` is None when the
+        primary succeeded, otherwise a short string describing which
+        fallback model was used and why.
+    """
+    try:
+        result = run_analysis_sync(
+            analysis_type, transcript_content, model_id, metadata
+        )
+        return result, None
+    except Exception as primary_error:
+        if not fallback_model_id or fallback_model_id == model_id:
+            raise
+        err_msg = f"{type(primary_error).__name__}: {primary_error}"
+        logger.warning(
+            f"Primary model {model_id} failed for {analysis_type} ({err_msg}); "
+            f"falling back to {fallback_model_id}"
+        )
+        result = run_analysis_sync(
+            analysis_type, transcript_content, fallback_model_id, metadata
+        )
+        notice = f"Primary model {model_id} unavailable; used fallback {fallback_model_id}"
+        return result, notice

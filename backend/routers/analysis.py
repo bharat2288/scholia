@@ -34,7 +34,7 @@ class AnalysisCostRequest(BaseModel):
     """Request body for pre-flight cost estimate."""
     transcript_content: str
     analysis_types: List[str] = ["summary", "key_claims"]
-    model_id: str = "claude-opus"
+    model_id: str = "gpt-5.4"
 
 
 @router.get("/analysis-types")
@@ -92,7 +92,7 @@ async def get_source_analyses(source_id: str):
 async def analyze_source_stream(
     source_id: str,
     types: str = Query("summary,key_claims", description="Comma-separated analysis types"),
-    model: str = Query("claude-opus", description="Model ID from CHAT_MODELS"),
+    model: str = Query("gpt-5.4", description="Model ID from CHAT_MODELS"),
 ):
     """
     Run analyses on a source via Server-Sent Events.
@@ -105,7 +105,11 @@ async def analyze_source_stream(
     """
     import asyncio
     from fastapi.responses import StreamingResponse
-    from services.analysis_engine import run_analysis_sync, ANALYSIS_PROMPTS
+    from services.analysis_engine import (
+        run_analysis_with_fallback,
+        ANALYSIS_PROMPTS,
+        ANALYSIS_FALLBACK_MODEL,
+    )
 
     db = await get_db()
 
@@ -162,14 +166,32 @@ async def analyze_source_stream(
             })
 
             try:
-                # Run LLM call in thread pool (synchronous API call)
+                # Run LLM call in thread pool (synchronous API call).
+                # Uses the fallback wrapper so a credit/rate-limit failure on
+                # the primary model automatically retries on grok-4.20 before
+                # surfacing an error to the user.
                 loop = asyncio.get_running_loop()
-                result = await loop.run_in_executor(
+                result, fallback_notice = await loop.run_in_executor(
                     None,
-                    lambda at=analysis_type: run_analysis_sync(
-                        at, transcript_content, model, metadata
+                    lambda at=analysis_type: run_analysis_with_fallback(
+                        at,
+                        transcript_content,
+                        model_id=model,
+                        metadata=metadata,
+                        fallback_model_id=ANALYSIS_FALLBACK_MODEL,
                     ),
                 )
+
+                if fallback_notice:
+                    yield send_event({
+                        "stage": "analysis",
+                        "status": "fallback",
+                        "type": analysis_type,
+                        "display_name": display_name,
+                        "current": i + 1,
+                        "total": total,
+                        "message": fallback_notice,
+                    })
 
                 # Delete any existing analysis of same type (replace on re-run)
                 await db.execute(

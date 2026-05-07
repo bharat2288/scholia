@@ -5,6 +5,7 @@ import useDeviceLayout from '../../hooks/useDeviceLayout'
 import Drawer from '../common/Drawer'
 import {
   useSourceContent,
+  useMeshbookFacet,
   useHighlights,
   useCreateHighlight,
   useDeleteHighlight,
@@ -1831,6 +1832,11 @@ function NoteContent({ content, tags = [] }) {
  */
 function InfoPanel({ documentData, sourceId, copyAllText, copiedAll, onEditMetadata }) {
   const originalPath = documentData?.original_path
+  const { data: meshbookResponse, error: meshbookError } = useMeshbookFacet(sourceId)
+  const meshbookFacet = meshbookResponse?.available ? meshbookResponse.facet : null
+  const meshbookFailureReason = meshbookResponse?.available === false ? meshbookResponse.reason : null
+  const meshbookFailureStatusCode = meshbookResponse?.status_code ?? null
+  const showMeshbookUnavailable = !meshbookFacet && (meshbookFailureReason || meshbookError)
 
   // Helper to format value for display (handles arrays of objects)
   const formatValue = (value) => {
@@ -1888,6 +1894,82 @@ function InfoPanel({ documentData, sourceId, copyAllText, copiedAll, onEditMetad
     )
   }
 
+  const formatTimestamp = (value) => {
+    if (!value) return null
+
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) {
+      return value
+    }
+
+    return date.toLocaleString([], {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    })
+  }
+
+  const MeshbookField = ({ label, value }) => {
+    if (value === null || value === undefined || value === '') return null
+
+    return (
+      <div className="flex items-start justify-between gap-3">
+        <span className="text-muted text-xs">{label}</span>
+        <span className="text-xs text-secondary text-right">{value}</span>
+      </div>
+    )
+  }
+
+  const meshbookFallback = (() => {
+    if (meshbookError) {
+      return {
+        label: 'Unavailable',
+        description: 'Meshbook status could not be loaded from the Scholia backend.',
+        badgeClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+      }
+    }
+    switch (meshbookFailureReason) {
+      case 'not_found':
+        return {
+          label: 'Not tracked',
+          description: 'This source is not tracked in Meshbook yet.',
+          badgeClass: 'bg-raised text-secondary border-elevated',
+        }
+      case 'offline':
+        return {
+          label: 'Offline',
+          description: 'Meshbook is offline or unreachable right now.',
+          badgeClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+        }
+      case 'timeout':
+        return {
+          label: 'Timed out',
+          description: 'Meshbook did not respond before the proxy timed out.',
+          badgeClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+        }
+      case 'upstream_error':
+        return {
+          label: 'Error',
+          description: meshbookFailureStatusCode
+            ? `Meshbook returned an error (HTTP ${meshbookFailureStatusCode}).`
+            : 'Meshbook returned an upstream error.',
+          badgeClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+        }
+      default:
+        return null
+    }
+  })()
+
+  const meshbookStatusClass = meshbookFacet?.meshbook_status === 'ready'
+    ? 'bg-green-500/15 text-green-300 border-green-500/30'
+    : meshbookFacet?.meshbook_status === 'active'
+      ? 'bg-camel/15 text-camel border-camel/30'
+      : meshbookFacet
+        ? 'bg-raised text-secondary border-elevated'
+        : meshbookFallback?.badgeClass || 'bg-raised text-secondary border-elevated'
+
   return (
     <div className="space-y-4">
       {/* Document metadata display */}
@@ -1931,6 +2013,53 @@ function InfoPanel({ documentData, sourceId, copyAllText, copiedAll, onEditMetad
         {/* Keywords */}
         <MetadataField label="Keywords" value={documentData?.keywords} />
       </div>
+
+      {(meshbookFacet || showMeshbookUnavailable) && (
+        <div className="border border-subtle rounded-xl bg-raised/40 p-3 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="label text-camel text-xs">Meshbook</p>
+              <p className="text-[11px] text-muted mt-1">
+                Compiler status for this source.
+              </p>
+            </div>
+            {(meshbookFacet?.meshbook_status_label || meshbookFallback?.label) && (
+              <span className={`px-2 py-1 rounded-full border text-[11px] font-medium ${meshbookStatusClass}`}>
+                {meshbookFacet?.meshbook_status_label || meshbookFallback?.label}
+              </span>
+            )}
+          </div>
+
+          {meshbookFacet ? (
+            <>
+              <div className="space-y-2">
+                <MeshbookField label="Packet profile" value={meshbookFacet.packet_profile} />
+                <MeshbookField label="Recommended action" value={meshbookFacet.recommended_action_label} />
+                <MeshbookField label="Linked pages" value={meshbookFacet.linked_page_count} />
+                <MeshbookField label="Last processed" value={formatTimestamp(meshbookFacet.last_processed_or_reviewed_at)} />
+              </div>
+
+              {meshbookFacet.open_in_meshbook_url && (
+                <a
+                  href={meshbookFacet.open_in_meshbook_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full px-4 py-2 bg-base border border-elevated rounded-lg text-secondary hover:text-primary hover:border-camel transition-colors text-sm flex items-center justify-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                  Open in Meshbook
+                </a>
+              )}
+            </>
+          ) : (
+            <p className="text-xs text-secondary">
+              {meshbookFallback?.description || 'Meshbook status is unavailable right now.'}
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="border-t border-subtle pt-4 space-y-2">
         {/* Copy All button */}

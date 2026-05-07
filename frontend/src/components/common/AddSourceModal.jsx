@@ -100,7 +100,7 @@ function ClipUrlTab({ onClose, onSuccess }) {
 
   // Video analysis state
   const [selectedAnalyses, setSelectedAnalyses] = useState(['summary', 'key_claims'])
-  const [analysisModel, setAnalysisModel] = useState('claude-opus')
+  const [analysisModel, setAnalysisModel] = useState('gpt-5.4')
   const [analysisProgress, setAnalysisProgress] = useState(null) // SSE events
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [analysisDone, setAnalysisDone] = useState(false)
@@ -469,7 +469,8 @@ function ClipUrlTab({ onClose, onSuccess }) {
           {/* Cost note */}
           {selectedAnalyses.length > 0 && (
             <p className="text-xs text-muted">
-              Cost calculated after transcript is fetched. Opus 4.6 typically ~$0.05-0.15 per analysis.
+              Cost calculated after transcript is fetched. GPT-5.4 typically ~$0.05-0.12 per analysis;
+              auto-falls back to Grok 4.20 (OpenRouter) if OpenAI errors.
             </p>
           )}
         </div>

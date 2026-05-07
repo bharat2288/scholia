@@ -131,6 +131,16 @@ CHAT_MODELS = {
         "default": False,
         "tier_hints": ["orchestrator", "synthesis"],
     },
+    "gpt-5.4": {
+        "provider": "openai",
+        "model": "gpt-5.4",
+        "display_name": "GPT-5.4",
+        "description": "OpenAI frontier (Mar 2026), strong analysis and synthesis",
+        "api_url": "https://api.openai.com/v1/chat/completions",
+        "pricing": {"input": 2.00, "output": 16.00},
+        "default": False,
+        "tier_hints": ["orchestrator", "synthesis"],
+    },
     "o3": {
         "provider": "openai",
         "model": "o3",
@@ -203,6 +213,16 @@ CHAT_MODELS = {
         "pricing": {"input": 0.20, "output": 1.50},
         "default": False,
         "tier_hints": ["orchestrator"],
+    },
+    "grok-4.20": {
+        "provider": "openrouter",
+        "model": "x-ai/grok-4.20",
+        "display_name": "Grok 4.20",
+        "description": "xAI frontier, 2M context, strong reasoning (analysis fallback)",
+        "api_url": "https://openrouter.ai/api/v1/chat/completions",
+        "pricing": {"input": 2.00, "output": 6.00},
+        "default": False,
+        "tier_hints": ["orchestrator", "synthesis"],
     },
     "qwen3-coder": {
         "provider": "openrouter",
