@@ -514,8 +514,9 @@ export default function Reader() {
       if (cancelled || !anchor.el?.isConnected) { finish(); return }
       const containerTop = container.getBoundingClientRect().top
       const correction = (anchor.el.getBoundingClientRect().top - containerTop) - anchor.delta
-      // Skip sub-pixel churn; ignore absurd corrections from a transient zero-rect.
-      if (Math.abs(correction) > 0.5 && Math.abs(correction) < 5000) {
+      // Skip sub-pixel churn; corrections can legitimately be large (deep in a
+      // long doc the column rewrap shifts everything above the anchor).
+      if (Number.isFinite(correction) && Math.abs(correction) > 0.5) {
         container.scrollTop += correction
       }
       if (performance.now() - start < DURATION) {
