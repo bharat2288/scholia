@@ -103,6 +103,7 @@ export default function Reader() {
   const [isChatExpanded, setIsChatExpanded] = useState(false)
   const saveTimeoutRef = useRef(null)
   const scrollSpyRef = useRef(false) // true when scroll spy triggered the section change
+  const scrollAnchorRef = useRef(null) // pins reading position across tablet sidebar width changes
 
   // Mobile layout
   const layout = useDeviceLayout()
@@ -449,6 +450,88 @@ export default function Reader() {
     }
   }
 
+  // Record the top-most visible text element so the reading position can be
+  // restored after the tablet sidebar toggle reflows the column (it changes
+  // the reading pane width, which would otherwise drop you elsewhere).
+  const captureScrollAnchor = () => {
+    const container = contentRef.current
+    if (!container) return null
+    const rect = container.getBoundingClientRect()
+    const x = rect.left + rect.width / 2
+    // Probe a few points below the sticky header until one lands on a tracked span.
+    for (const dy of [70, 110, 160, 220, 300]) {
+      let el = document.elementFromPoint(x, rect.top + dy)
+      while (el && el !== container && el.getAttribute?.('data-offset') == null) {
+        el = el.parentElement
+      }
+      if (el && el !== container && el.getAttribute?.('data-offset') != null) {
+        return { el, delta: el.getBoundingClientRect().top - rect.top }
+      }
+    }
+    return null
+  }
+
+  // Capture the anchor synchronously (old layout still in DOM) before flipping.
+  const setTabletSidebarAnchored = useCallback((next) => {
+    scrollAnchorRef.current = captureScrollAnchor()
+    setTabletSidebarVisible(next)
+  }, [])
+
+  // After the width transition, keep the captured element pinned to its prior
+  // screen position. Runs per animation frame for the transition's duration so
+  // the restore is smooth rather than a jump at the end.
+  useEffect(() => {
+    if (layout !== 'tablet') return
+    const anchor = scrollAnchorRef.current
+    scrollAnchorRef.current = null // mount runs this with a null anchor → no-op
+    if (!anchor) return
+    const container = contentRef.current
+    if (!container) return
+
+    // Cancel any in-flight smooth scroll (e.g. from a "Find" jump) so our
+    // per-frame scrollTop writes win deterministically instead of fighting it.
+    const prevBehavior = container.style.scrollBehavior
+    container.style.scrollBehavior = 'auto'
+    container.scrollTo({ top: container.scrollTop })
+
+    let raf
+    let cancelled = false
+    // A user wheel/touch during the window means they want to read elsewhere —
+    // stop pinning. (Our own scrollTop writes fire 'scroll' but not these.)
+    const onUserScroll = () => { cancelled = true }
+    container.addEventListener('wheel', onUserScroll, { passive: true, once: true })
+    container.addEventListener('touchmove', onUserScroll, { passive: true, once: true })
+
+    const finish = () => {
+      container.style.scrollBehavior = prevBehavior
+      container.removeEventListener('wheel', onUserScroll)
+      container.removeEventListener('touchmove', onUserScroll)
+    }
+
+    const start = performance.now()
+    const DURATION = 340 // slightly longer than the 300ms CSS width transition
+    const tick = () => {
+      if (cancelled || !anchor.el?.isConnected) { finish(); return }
+      const containerTop = container.getBoundingClientRect().top
+      const correction = (anchor.el.getBoundingClientRect().top - containerTop) - anchor.delta
+      // Skip sub-pixel churn; ignore absurd corrections from a transient zero-rect.
+      if (Math.abs(correction) > 0.5 && Math.abs(correction) < 5000) {
+        container.scrollTop += correction
+      }
+      if (performance.now() - start < DURATION) {
+        raf = requestAnimationFrame(tick)
+      } else {
+        finish()
+      }
+    }
+    raf = requestAnimationFrame(tick)
+
+    return () => {
+      cancelAnimationFrame(raf)
+      finish()
+    }
+  }, [tabletSidebarVisible, layout])
+
   // Close popup when clicking outside (but preserve selection if clicking in sidebar for chat)
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -651,7 +734,7 @@ export default function Reader() {
     isChatExpanded,
     setIsChatExpanded,
     tabletSidebarVisible,
-    setTabletSidebarVisible,
+    setTabletSidebarVisible: setTabletSidebarAnchored,
     layout,
     initialConversationId
   }
@@ -790,7 +873,7 @@ export default function Reader() {
         {/* Floating toggle button - only visible when sidebar is hidden */}
         {!tabletSidebarVisible && (
           <button
-            onClick={() => setTabletSidebarVisible(true)}
+            onClick={() => setTabletSidebarAnchored(true)}
             className="fixed right-4 bottom-20 z-20 p-3 bg-raised border border-subtle rounded-full shadow-lg text-secondary hover:text-primary hover:bg-surface transition-all"
             title="Show annotations & chat"
           >
