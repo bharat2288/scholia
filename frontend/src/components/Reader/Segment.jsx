@@ -305,7 +305,7 @@ export function parseAnalysisIntoSegments(content) {
 /**
  * Render a single segment
  */
-export default function Segment({ segment, segmentIndex, highlights, highlightMap, onCopySection, isCopied, sourceId, activeCue }) {
+export default function Segment({ segment, segmentIndex, highlights, highlightMap, onCopySection, isCopied, sourceId, activeCue, searchMatches, currentMatchStart }) {
   switch (segment.type) {
     case 'title':
       return null
@@ -403,6 +403,8 @@ export default function Segment({ segment, segmentIndex, highlights, highlightMa
                 baseOffset={tsBaseOffset}
                 highlights={highlights}
                 activeCue={activeCue}
+                searchMatches={searchMatches}
+                currentMatchStart={currentMatchStart}
               />
             </p>
           )}
@@ -519,7 +521,7 @@ export default function Segment({ segment, segmentIndex, highlights, highlightMa
             if (!cleanLine) return <br key={i} />
             return (
               <span key={i}>
-                <OffsetText text={cleanLine} baseOffset={textOffset} highlights={highlights} />
+                <OffsetText text={cleanLine} baseOffset={textOffset} highlights={highlights} searchMatches={searchMatches} currentMatchStart={currentMatchStart} />
                 {i < originalLines.length - 1 && <br />}
               </span>
             )
@@ -561,6 +563,8 @@ export default function Segment({ segment, segmentIndex, highlights, highlightMa
               text={segment.text}
               baseOffset={segment.offset}
               highlights={highlights}
+              searchMatches={searchMatches}
+              currentMatchStart={currentMatchStart}
             />
           </p>
           {sourceId && (

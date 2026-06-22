@@ -23,6 +23,7 @@ import { API_BASE } from '../../config'
 import AutocompleteTextarea from '../common/AutocompleteTextarea'
 import YouTubePlayer from './YouTubePlayer'
 import ReadingContent from './ReadingContent'
+import { parseContentIntoSegments } from './Segment'
 import { HIGHLIGHT_COLORS, DEFAULT_HIGHLIGHT_COLOR, cleanSectionTitle, CopyIcon } from './readerUtils'
 
 // Hand-drawn squiggle underline element for Reader title
@@ -50,6 +51,65 @@ function SquiggleSVG({ className = "" }) {
 /**
  * Font size slider for reader content
  */
+const EMPTY_MATCHES = []
+
+/**
+ * In-document search box for the reader nav. Collapsed to a magnifier icon
+ * until opened; shows match count and prev/next navigation when active.
+ */
+function ReaderSearch({ open, onOpen, query, setQuery, onClose, matchCount, currentIndex, onPrev, onNext }) {
+  const inputRef = useRef(null)
+  useEffect(() => { if (open) inputRef.current?.focus() }, [open])
+
+  if (!open) {
+    return (
+      <button onClick={onOpen} className="p-1.5 text-muted hover:text-secondary transition-colors" title="Search in document">
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+      </button>
+    )
+  }
+
+  const hasQuery = query.trim().length >= 2
+  const counter = !hasQuery ? '' : matchCount ? `${currentIndex + 1}/${matchCount}` : '0/0'
+
+  return (
+    <div className="flex items-center gap-1 bg-raised border border-subtle rounded-md pl-2 pr-1 py-1">
+      <svg className="w-3.5 h-3.5 text-muted flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+      </svg>
+      <input
+        ref={inputRef}
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); e.shiftKey ? onPrev() : onNext() }
+          else if (e.key === 'Escape') { e.preventDefault(); onClose() }
+        }}
+        placeholder="Find in text"
+        className="bg-transparent text-xs text-primary placeholder-muted outline-none w-24 sm:w-28"
+      />
+      <span className="text-[10px] text-muted tabular-nums min-w-[2.5rem] text-center">{counter}</span>
+      <button onClick={onPrev} disabled={!matchCount} className="p-1 text-muted hover:text-secondary disabled:opacity-30 transition-colors" title="Previous match (Shift+Enter)">
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+        </svg>
+      </button>
+      <button onClick={onNext} disabled={!matchCount} className="p-1 text-muted hover:text-secondary disabled:opacity-30 transition-colors" title="Next match (Enter)">
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      <button onClick={onClose} className="p-1 text-muted hover:text-secondary transition-colors" title="Close search (Esc)">
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+  )
+}
+
 function FontSizeSlider() {
   const { fontSize, setFontSize } = useReaderStore()
 
@@ -126,6 +186,12 @@ export default function Reader() {
       localStorage.setItem('scholia-tablet-sidebar', JSON.stringify(tabletSidebarVisible))
     } catch (e) {}
   }, [tabletSidebarVisible])
+
+  // In-document search
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const [currentMatchIdx, setCurrentMatchIdx] = useState(-1)
 
   // Resizable pane widths
   const { tocWidth, sidebarWidth, handleTocResize, handleSidebarResize, isResizing } = useResizable()
@@ -533,6 +599,88 @@ export default function Reader() {
     }
   }, [tabletSidebarVisible, layout])
 
+  // Debounce the search query so large documents don't re-render on every keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(searchQuery), 200)
+    return () => clearTimeout(t)
+  }, [searchQuery])
+
+  // Find case-insensitive matches in the document content (absolute offsets).
+  // Only keep matches inside text that actually renders through OffsetText
+  // (paragraphs, blockquotes, transcript text) so the counter and highlights
+  // agree — markers, headings, code, tables and figures aren't searchable.
+  const searchMatches = useMemo(() => {
+    const q = debouncedQuery.trim().toLowerCase()
+    if (q.length < 2) return EMPTY_MATCHES
+    const raw = data?.content || ''
+    if (!raw) return EMPTY_MATCHES
+    const hay = raw.toLowerCase()
+
+    const segments = parseContentIntoSegments(raw, [], [], null)
+    const ranges = []
+    for (const s of segments) {
+      if (s.type === 'paragraph') ranges.push([s.offset, s.offset + s.text.length])
+      else if (s.type === 'blockquote') ranges.push([s.offset, s.offset + (s.originalText?.length ?? s.text.length)])
+      else if (s.type === 'timestamp' && s.textOffset != null) ranges.push([s.textOffset, s.textOffset + s.text.length])
+    }
+    ranges.sort((a, b) => a[0] - b[0])
+
+    const out = []
+    let ri = 0
+    let i = hay.indexOf(q)
+    while (i !== -1 && out.length < 1000) {
+      const end = i + q.length
+      while (ri < ranges.length && ranges[ri][1] < end) ri++
+      if (ri < ranges.length && i >= ranges[ri][0] && end <= ranges[ri][1]) {
+        out.push({ start: i, end })
+      }
+      i = hay.indexOf(q, end)
+    }
+    return out
+  }, [debouncedQuery, data?.content])
+
+  // Reset to the first match whenever the result set changes.
+  useEffect(() => {
+    setCurrentMatchIdx(searchMatches.length > 0 ? 0 : -1)
+  }, [searchMatches])
+
+  const currentMatchStart = currentMatchIdx >= 0 && currentMatchIdx < searchMatches.length
+    ? searchMatches[currentMatchIdx].start
+    : -1
+
+  // Scroll the focused match into view once it's rendered.
+  useEffect(() => {
+    if (currentMatchStart < 0) return
+    const el = document.querySelector('[data-search-current="true"]')
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [currentMatchStart, searchMatches])
+
+  const gotoMatch = useCallback((dir) => {
+    setCurrentMatchIdx((idx) => {
+      const n = searchMatches.length
+      if (n === 0) return -1
+      return ((idx < 0 ? 0 : idx) + dir + n) % n
+    })
+  }, [searchMatches.length])
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false)
+    setSearchQuery('')
+    setCurrentMatchIdx(-1)
+  }, [])
+
+  const readerSearchProps = {
+    open: searchOpen,
+    onOpen: () => setSearchOpen(true),
+    query: searchQuery,
+    setQuery: setSearchQuery,
+    onClose: closeSearch,
+    matchCount: searchMatches.length,
+    currentIndex: currentMatchIdx,
+    onPrev: () => gotoMatch(-1),
+    onNext: () => gotoMatch(1),
+  }
+
   // Close popup when clicking outside (but preserve selection if clicking in sidebar for chat)
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -720,6 +868,8 @@ export default function Reader() {
         highlights={highlights}
         sourceId={id}
         analyses={data?.analyses || []}
+        searchMatches={searchMatches}
+        currentMatchStart={currentMatchStart}
       />
     </>
   )
@@ -851,7 +1001,8 @@ export default function Reader() {
                   Library
                 </Link>
               </div>
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3">
+                <ReaderSearch {...readerSearchProps} />
                 <FontSizeSlider />
                 <span className="text-xs text-muted truncate max-w-[200px]">{data?.title}</span>
               </div>
@@ -933,7 +1084,8 @@ export default function Reader() {
                     </svg>
                     Library
                   </Link>
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-3">
+                    <ReaderSearch {...readerSearchProps} />
                     <FontSizeSlider />
                     <span className="text-xs text-muted truncate max-w-xs">{data?.title}</span>
                   </div>

@@ -85,7 +85,7 @@ export function AnalysisSection({ analysis }) {
  * in the original document. This allows us to map DOM selections back to
  * character offsets WITHOUT searching/matching text (which caused crashes).
  */
-export default function ReadingContent({ content, sections, figures, highlights, sourceId, analyses }) {
+export default function ReadingContent({ content, sections, figures, highlights, sourceId, analyses, searchMatches, currentMatchStart }) {
   const [copiedSection, setCopiedSection] = useState(null)
   const activeCueRef = useRef(null)
   const userScrolledRef = useRef(false)
@@ -183,6 +183,8 @@ export default function ReadingContent({ content, sections, figures, highlights,
           isCopied={copiedSection === i}
           sourceId={sourceId}
           activeCue={activeCue}
+          searchMatches={searchMatches}
+          currentMatchStart={currentMatchStart}
         />
       ))}
     </div>
