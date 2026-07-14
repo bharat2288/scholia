@@ -34,7 +34,7 @@ class AnalysisCostRequest(BaseModel):
     """Request body for pre-flight cost estimate."""
     transcript_content: str
     analysis_types: List[str] = ["summary", "key_claims"]
-    model_id: str = "gpt-5.4"
+    model_id: str = "codex-gpt-5.5"
 
 
 @router.get("/analysis-types")
@@ -92,7 +92,7 @@ async def get_source_analyses(source_id: str):
 async def analyze_source_stream(
     source_id: str,
     types: str = Query("summary,key_claims", description="Comma-separated analysis types"),
-    model: str = Query("gpt-5.4", description="Model ID from CHAT_MODELS"),
+    model: str = Query("codex-gpt-5.5", description="Analysis model ID"),
 ):
     """
     Run analyses on a source via Server-Sent Events.

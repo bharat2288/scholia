@@ -10,8 +10,11 @@ since analysis is a one-shot prompt/response pattern, not multi-turn chat.
 
 import logging
 import os
+import shutil
+import subprocess
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import anthropic
@@ -25,15 +28,24 @@ logger = logging.getLogger(__name__)
 # ============================================================
 # Default model + fallback chain
 # ============================================================
-# Primary: gpt-5.4 (OpenAI direct, via OPENAI_COUNCIL_KEY).
-# Fallback: x-ai/grok-4.20 via OpenRouter (OPENROUTER_API_KEY) — used when the
-# primary model errors out (e.g. credit exhaustion, rate limit, 5xx).
-# Anthropic Claude models are intentionally NOT in the fallback chain — the Max
-# subscription does not grant API credit, and direct Anthropic billing was the
-# original failure mode this chain is defending against.
+# Primary: Codex CLI via saved ChatGPT/Codex subscription auth. This is a local
+# subprocess provider, not OpenAI Platform API billing.
+# Fallback: x-ai/grok-4.20 via OpenRouter (OPENROUTER_API_KEY) — used only when
+# the Codex CLI is unavailable or fails and the fallback credentials exist.
 
-DEFAULT_ANALYSIS_MODEL = "gpt-5.4"
+DEFAULT_ANALYSIS_MODEL = "codex-gpt-5.5"
 ANALYSIS_FALLBACK_MODEL = "grok-4.20"
+
+CODEX_ANALYSIS_MODELS = {
+    "codex-gpt-5.5": {
+        "model": "gpt-5.5",
+        "display_name": "Codex GPT-5.5 (subscription)",
+    },
+    "codex-default": {
+        "model": None,
+        "display_name": "Codex default model (subscription)",
+    },
+}
 
 
 # ============================================================
@@ -192,6 +204,25 @@ def estimate_cost(
     Estimates input tokens as ~1.3 tokens per word (conservative for English text),
     plus prompt overhead (~500 tokens). Output estimated from max_tokens.
     """
+    if model_id in CODEX_ANALYSIS_MODELS:
+        word_count = len(transcript_content.split())
+        analyses = []
+        for analysis_type in analysis_types:
+            prompt_config = ANALYSIS_PROMPTS.get(analysis_type)
+            if not prompt_config:
+                continue
+            analyses.append({
+                "type": analysis_type,
+                "display_name": prompt_config["display_name"],
+                "estimated_cost": 0.0,
+            })
+        return CostEstimate(
+            analyses=analyses,
+            total_estimated_cost=0.0,
+            model_display_name=CODEX_ANALYSIS_MODELS[model_id]["display_name"],
+            word_count=word_count,
+        )
+
     model_config = CHAT_MODELS.get(model_id)
     if not model_config:
         raise ValueError(f"Unknown model: {model_id}")
@@ -361,6 +392,73 @@ def _call_openrouter(
     return response_text, input_tokens, output_tokens
 
 
+def _repo_root() -> Path:
+    """Return Scholia repo root for Codex subprocess cwd."""
+    return Path(__file__).resolve().parents[2]
+
+
+def _call_codex(
+    prompt: str,
+    model: Optional[str],
+    max_tokens: int,
+) -> tuple[str, int, int]:
+    """
+    Run a one-shot Codex CLI analysis using saved ChatGPT/Codex auth.
+
+    Codex subscriptions are exposed through the local CLI, not through the
+    OpenAI Platform API. We keep the subprocess read-only and ephemeral so this
+    provider behaves like a text generator for Scholia's analysis pipeline.
+    """
+    codex_cmd = shutil.which("codex")
+    if not codex_cmd:
+        raise ValueError("Codex CLI not found on PATH")
+
+    timeout = int(os.getenv("SCHOLIA_CODEX_ANALYSIS_TIMEOUT", "900"))
+    workdir = Path(os.getenv("SCHOLIA_CODEX_WORKDIR", str(_repo_root())))
+
+    instruction = (
+        "You are generating a Scholia reader analysis artifact. "
+        "Return only the requested markdown content. Do not describe your process, "
+        "do not mention Codex, and do not wrap the output in a code block.\n\n"
+        f"Target maximum length: about {max_tokens} tokens.\n\n"
+        f"{prompt}"
+    )
+
+    cmd = [
+        codex_cmd,
+        "exec",
+        "--ephemeral",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "--ignore-rules",
+        "-C",
+        str(workdir),
+    ]
+    if model:
+        cmd.extend(["--model", model])
+    cmd.append("-")
+
+    completed = subprocess.run(
+        cmd,
+        input=instruction,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+    if completed.returncode != 0:
+        stderr_tail = (completed.stderr or "").strip()[-2000:]
+        raise ValueError(f"Codex analysis failed: {stderr_tail}")
+
+    response_text = (completed.stdout or "").strip()
+    if not response_text:
+        raise ValueError("Codex analysis returned empty output")
+
+    return response_text, 0, 0
+
+
 def run_analysis_sync(
     analysis_type: str,
     transcript_content: str,
@@ -379,6 +477,29 @@ def run_analysis_sync(
     Returns:
         AnalysisResult with content, token counts, and cost
     """
+    if model_id in CODEX_ANALYSIS_MODELS:
+        filled_prompt, max_tokens = _build_prompt(analysis_type, transcript_content, metadata)
+        prompt_config = ANALYSIS_PROMPTS[analysis_type]
+        codex_config = CODEX_ANALYSIS_MODELS[model_id]
+        logger.info(
+            f"Running {analysis_type} analysis with {codex_config['display_name']} "
+            f"(~{len(filled_prompt)} chars)"
+        )
+        response_text, input_tokens, output_tokens = _call_codex(
+            filled_prompt,
+            codex_config["model"],
+            max_tokens,
+        )
+        return AnalysisResult(
+            analysis_type=analysis_type,
+            display_name=prompt_config["display_name"],
+            content=response_text,
+            model=f"codex:{codex_config['model'] or 'default'}",
+            tokens_input=input_tokens,
+            tokens_output=output_tokens,
+            cost_usd=0.0,
+        )
+
     model_config = CHAT_MODELS.get(model_id)
     if not model_config:
         raise ValueError(f"Unknown model: {model_id}")

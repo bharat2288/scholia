@@ -100,7 +100,7 @@ function ClipUrlTab({ onClose, onSuccess }) {
 
   // Video analysis state
   const [selectedAnalyses, setSelectedAnalyses] = useState(['summary', 'key_claims'])
-  const [analysisModel, setAnalysisModel] = useState('gpt-5.4')
+  const [analysisModel, setAnalysisModel] = useState('codex-gpt-5.5')
   const [analysisProgress, setAnalysisProgress] = useState(null) // SSE events
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [analysisDone, setAnalysisDone] = useState(false)
@@ -457,6 +457,9 @@ function ClipUrlTab({ onClose, onSuccess }) {
                 onChange={(e) => setAnalysisModel(e.target.value)}
                 className="w-full bg-base border border-subtle rounded-lg px-4 py-2.5 text-primary focus:border-camel focus:outline-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)]"
               >
+                <option value="codex-gpt-5.5">
+                  Codex GPT-5.5 — subscription
+                </option>
                 {chatModels.map(m => (
                   <option key={m.id} value={m.id}>
                     {m.name} — ${m.pricing?.input ?? '?'}/M in, ${m.pricing?.output ?? '?'}/M out
@@ -469,8 +472,7 @@ function ClipUrlTab({ onClose, onSuccess }) {
           {/* Cost note */}
           {selectedAnalyses.length > 0 && (
             <p className="text-xs text-muted">
-              Cost calculated after transcript is fetched. GPT-5.4 typically ~$0.05-0.12 per analysis;
-              auto-falls back to Grok 4.20 (OpenRouter) if OpenAI errors.
+              Codex uses your local subscription-backed CLI. API-priced models remain available as manual fallbacks.
             </p>
           )}
         </div>
